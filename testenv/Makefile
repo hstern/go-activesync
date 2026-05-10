@@ -6,6 +6,7 @@
 # Usage:
 #   make up         # docker compose build + start, wait for healthy
 #   make test       # run integration tests against the running stack
+#   make probe      # run cmd/eas-autoprobe against the running stack
 #   make logs       # follow container logs
 #   make shell      # interactive shell inside the container
 #   make seed       # inject a test message into the mailbox via IMAP APPEND
@@ -14,13 +15,19 @@
 
 # Use docker compose plugin if available; fall back to standalone docker-compose.
 COMPOSE ?= $(shell command -v docker-compose >/dev/null 2>&1 && echo docker-compose || echo docker compose)
-ENV := \
-    EAS_INTEGRATION_URL=http://localhost:8580/Microsoft-Server-ActiveSync \
-    EAS_INTEGRATION_USER=integration \
-    EAS_INTEGRATION_PASS=integration \
-    EAS_INTEGRATION_DEVICE=integration00000000000000000000
 
-.PHONY: up down test logs shell seed clean
+EAS_INTEGRATION_URL    := http://localhost:8580/Microsoft-Server-ActiveSync
+EAS_INTEGRATION_USER   := integration
+EAS_INTEGRATION_PASS   := integration
+EAS_INTEGRATION_DEVICE := integration00000000000000000000
+
+ENV := \
+    EAS_INTEGRATION_URL=$(EAS_INTEGRATION_URL) \
+    EAS_INTEGRATION_USER=$(EAS_INTEGRATION_USER) \
+    EAS_INTEGRATION_PASS=$(EAS_INTEGRATION_PASS) \
+    EAS_INTEGRATION_DEVICE=$(EAS_INTEGRATION_DEVICE)
+
+.PHONY: up down test probe logs shell seed clean
 
 up:
 	$(COMPOSE) up --build -d
@@ -34,6 +41,13 @@ up:
 
 test:
 	cd .. && $(ENV) go test -tags integration -v -count=1 ./eas
+
+probe:
+	cd .. && \
+	    EAS_PROBE_USER=$(EAS_INTEGRATION_USER) \
+	    EAS_PROBE_SERVER=$(EAS_INTEGRATION_URL) \
+	    EAS_PROBE_PASSWORD=$(EAS_INTEGRATION_PASS) \
+	    go run ./cmd/eas-autoprobe -device-id $(EAS_INTEGRATION_DEVICE)
 
 logs:
 	$(COMPOSE) logs -f

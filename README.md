@@ -66,10 +66,13 @@ calendar recurrence, structured search) see **[`eas/README.md`](eas/README.md)**
 |---------|---------|-----------|
 | [`eas`](eas/) | EAS client: every MS-ASCMD command, all major auth schemes, durable state | [eas/README.md](eas/README.md) |
 | [`wbxml`](wbxml/) | WAP Binary XML codec, all 25 EAS code pages | [wbxml/README.md](wbxml/README.md) |
+| [`cmd/eas-autoprobe`](cmd/eas-autoprobe/) | One-shot read-only protocol probe; smoke-tests a deployment end-to-end | [cmd/eas-autoprobe/README.md](cmd/eas-autoprobe/README.md) |
 
 The `eas` package is what you use; `wbxml` is the wire-format layer it's
 built on, exported in case you need to debug a frame, register a custom
-code page, or build a non-EAS WBXML client.
+code page, or build a non-EAS WBXML client. `eas-autoprobe` is a CLI
+diagnostic — point it at any EAS endpoint and it reports per-command
+results.
 
 ## What's implemented
 
@@ -81,7 +84,8 @@ EmptyFolderContents, DocumentLibrary, FetchAttachment), `Settings`
 (DeviceInformation, OOF Get/Set, UserInformation,
 RightsManagementInformation, DevicePassword), `Ping`, `Provision` (with
 RemoteWipe acknowledgement), `Autodiscover` (HTTPS POST → HTTP redirect
-fallback → SRV lookup).
+fallback → SRV lookup → well-known OPTIONS probe for SOGo-style
+deployments).
 
 **Authentication.** HTTP Basic, OAuth Bearer (with `RetryOn401`
 token-refresh hook), NTLM (via `Azure/go-ntlmssp`), Negotiate / SPNEGO
