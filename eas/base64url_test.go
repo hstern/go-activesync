@@ -71,14 +71,53 @@ func TestBuildBase64Query_oversizedField(t *testing.T) {
 
 func TestEncodeVersion(t *testing.T) {
 	cases := map[string]byte{
-		"14.0": 140, "14.1": 141, "16.0": 160, "12.1": 121,
-		"":   141, // fallback
-		"99": 99,
+		"12.0": 120, "12.1": 121,
+		"14.0": 140, "14.1": 141,
+		"16.0": 160, "16.1": 161,
+		"":      141, // fallback
+		"99":    99,
+		"abcde": 141, // unparseable → fallback
 	}
 	for in, want := range cases {
 		if got := encodeVersion(in); got != want {
 			t.Errorf("encodeVersion(%q) = %d, want %d", in, got, want)
 		}
+	}
+}
+
+func TestApplyB64ToURL_stripsExistingQuery(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {})
+	out, err := c.applyB64ToURL("FolderSync",
+		"https://x/Microsoft-Server-ActiveSync?Cmd=FolderSync&User=u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One '?' in result, no '&' (single base64 param replaces the original).
+	if strings.Count(out, "?") != 1 {
+		t.Errorf("expected exactly one '?': %q", out)
+	}
+	if strings.Contains(out, "&") {
+		t.Errorf("expected no '&': %q", out)
+	}
+}
+
+func TestApplyB64ToURL_stateError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {})
+	c.cfg.State = &errStateStore{inner: NewMemoryState(), policyKeyErr: errSentinel("boom")}
+	_, err := c.applyB64ToURL("FolderSync", "https://x/Microsoft-Server-ActiveSync")
+	if err == nil {
+		t.Error("want error from PolicyKey lookup")
+	}
+}
+
+func TestApplyB64ToURL_buildError(t *testing.T) {
+	// DeviceID > 255 bytes forces buildBase64Query to fail; applyB64ToURL
+	// must surface that error.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {})
+	c.cfg.DeviceID = strings.Repeat("X", 256)
+	_, err := c.applyB64ToURL("FolderSync", "https://x/")
+	if err == nil {
+		t.Error("want error from buildBase64Query")
 	}
 }
 

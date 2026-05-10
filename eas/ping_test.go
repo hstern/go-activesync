@@ -121,3 +121,71 @@ func TestPing_emptyFoldersRejected(t *testing.T) {
 		t.Error("want error")
 	}
 }
+
+func TestPing_zeroHeartbeatDefaults(t *testing.T) {
+	// heartbeat <= 0 is replaced by 60 before the request is built.
+	c, cap, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(pingResponse(1, 0))
+	})
+	_, _ = c.Ping(context.Background(), 0, []PingFolder{{ID: "inbox", Class: "Email"}})
+	req, _ := wbxml.Unmarshal(cap.body, wbxml.DefaultRegistry())
+	if hb := req.Root.Find("HeartbeatInterval"); hb == nil || hb.TextContent() != "60" {
+		t.Errorf("HeartbeatInterval = %v", hb)
+	}
+}
+
+func TestPing_postErrorPropagates(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	})
+	if _, err := c.Ping(context.Background(), 60, []PingFolder{{ID: "i"}}); err == nil {
+		t.Error("want HTTP error")
+	}
+}
+
+func TestPing_emptyResponseRejected(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200)
+	})
+	if _, err := c.Ping(context.Background(), 60, []PingFolder{{ID: "i"}}); err == nil {
+		t.Error("want error on empty response")
+	}
+}
+
+func TestPing_topLevelIdElement(t *testing.T) {
+	// Some implementations put <Id> directly inside <Folders> instead of
+	// wrapping it in <Folder>. The parser handles that path too.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		root := wbxml.E(wbxml.PagePing, "Ping",
+			wbxml.E(wbxml.PagePing, "Status", wbxml.Text("2")),
+			wbxml.E(wbxml.PagePing, "Folders",
+				wbxml.Text("stray"), // non-element child must be skipped
+				wbxml.E(wbxml.PagePing, "Id", wbxml.Text("inbox")),
+			),
+		)
+		body, _ := wbxml.Marshal(&wbxml.Document{Root: root}, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	res, err := c.Ping(context.Background(), 60, []PingFolder{{ID: "inbox", Class: "Email"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.ChangedFolders) != 1 || res.ChangedFolders[0] != "inbox" {
+		t.Errorf("ChangedFolders = %v", res.ChangedFolders)
+	}
+}
+
+func TestPing_missingStatusIsError(t *testing.T) {
+	// Status=0 (no <Status>) must be reported as a malformed response.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		root := wbxml.E(wbxml.PagePing, "Ping") // no Status child
+		body, _ := wbxml.Marshal(&wbxml.Document{Root: root}, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	if _, err := c.Ping(context.Background(), 60, []PingFolder{{ID: "i"}}); err == nil {
+		t.Error("want error when Status is missing")
+	}
+}

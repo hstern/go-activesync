@@ -6,6 +6,7 @@ package eas
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"reflect"
 	"testing"
 )
@@ -106,6 +107,52 @@ func TestNegotiateVersion_optionsErrorReturnsCurrent(t *testing.T) {
 	}
 	if v != "14.1" {
 		t.Errorf("got %q, want unchanged 14.1 default", v)
+	}
+}
+
+func TestNegotiateVersion_keepsCurrentWhenOnlyServerHasIt(t *testing.T) {
+	// Server lists only "99.9" — none of supportedVersions match, but the
+	// client's current ASVersion is in the server's list, so the post-loop
+	// fallback should keep it.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("MS-ASProtocolVersions", "99.9")
+		w.WriteHeader(200)
+	})
+	c.cfg.ASVersion = "99.9"
+	v, err := c.NegotiateVersion(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != "99.9" {
+		t.Errorf("got %q, want 99.9 (kept current)", v)
+	}
+}
+
+func TestNegotiateVersion_noOverlapErrors(t *testing.T) {
+	// Server lists only versions we can't speak, and the client's current
+	// version isn't in that list either. Must error.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("MS-ASProtocolVersions", "8.0,9.0")
+		w.WriteHeader(200)
+	})
+	v, err := c.NegotiateVersion(context.Background())
+	if err == nil {
+		t.Errorf("want error, got version %q", v)
+	}
+	if v != "14.1" {
+		t.Errorf("kept version = %q (should be unchanged default)", v)
+	}
+}
+
+func TestOptions_buildRequestError(t *testing.T) {
+	// A control character (\x7f) in the URL forces http.NewRequestWithContext
+	// to return an error, exercising the build-request branch.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {})
+	bad, _ := url.Parse("https://x/path")
+	bad.Path = "/bad\x7fpath"
+	c.baseURL = bad
+	if _, err := c.Options(context.Background()); err == nil {
+		t.Error("want error from invalid URL")
 	}
 }
 

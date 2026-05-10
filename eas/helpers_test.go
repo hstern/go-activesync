@@ -89,6 +89,50 @@ func twoCallSyncServer(t *testing.T, folderID, syncKey, serverID string) (*Clien
 	return c, holder
 }
 
+// errSentinel is a one-line error literal usable from tests.
+type errSentinel string
+
+func (e errSentinel) Error() string { return string(e) }
+
+// errStateStore wraps another StateStore and returns a fixed error from
+// a chosen method. Tests use it to exercise the "state lookup failed"
+// branches without needing a stub implementation per call site.
+type errStateStore struct {
+	inner          StateStore
+	policyKeyErr   error
+	syncKeyErr     error
+	setPolicyErr   error
+	setSyncKeyErr  error
+}
+
+func (e *errStateStore) PolicyKey(ctx context.Context) (string, error) {
+	if e.policyKeyErr != nil {
+		return "", e.policyKeyErr
+	}
+	return e.inner.PolicyKey(ctx)
+}
+
+func (e *errStateStore) SetPolicyKey(ctx context.Context, key string) error {
+	if e.setPolicyErr != nil {
+		return e.setPolicyErr
+	}
+	return e.inner.SetPolicyKey(ctx, key)
+}
+
+func (e *errStateStore) SyncKey(ctx context.Context, folderID string) (string, error) {
+	if e.syncKeyErr != nil {
+		return "", e.syncKeyErr
+	}
+	return e.inner.SyncKey(ctx, folderID)
+}
+
+func (e *errStateStore) SetSyncKey(ctx context.Context, folderID, key string) error {
+	if e.setSyncKeyErr != nil {
+		return e.setSyncKeyErr
+	}
+	return e.inner.SetSyncKey(ctx, folderID, key)
+}
+
 // singleCallSyncServer responds to any Sync POST with an empty success
 // response and stashes the request body. The client's per-folder sync
 // key is pre-populated so the helper bootstrap path is skipped — tests

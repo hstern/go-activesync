@@ -102,6 +102,39 @@ func TestParseRightsLicense_allFields(t *testing.T) {
 	}
 }
 
+func TestGetRightsManagementTemplates_postErrorPropagates(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	})
+	if _, err := c.GetRightsManagementTemplates(context.Background()); err == nil {
+		t.Error("want HTTP error")
+	}
+}
+
+func TestGetRightsManagementTemplates_emptyResponseRejected(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200) // empty body → nil resp
+	})
+	if _, err := c.GetRightsManagementTemplates(context.Background()); err == nil {
+		t.Error("want error on empty response")
+	}
+}
+
+func TestParseRightsLicense_missingFieldsReturnEmpty(t *testing.T) {
+	// License element with only Owner; helper's get() must return "" for
+	// fields the server didn't include, not panic.
+	lic := wbxml.E(wbxml.PageRightsManagement, "RightsManagementLicense",
+		wbxml.E(wbxml.PageRightsManagement, "Owner", wbxml.Text("alice@x")),
+	)
+	got := ParseRightsLicense(lic)
+	if got.Owner != "alice@x" {
+		t.Errorf("Owner = %q", got.Owner)
+	}
+	if got.TemplateID != "" || got.ContentExpiryDate != "" || got.EditAllowed {
+		t.Errorf("missing fields not zero: %+v", got)
+	}
+}
+
 func TestParseRightsLicense_nilSafe(t *testing.T) {
 	got := ParseRightsLicense(nil)
 	if got != (RightsLicense{}) {

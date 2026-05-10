@@ -6,6 +6,7 @@ package eas
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 
@@ -176,6 +177,132 @@ func TestFolderSync_propagatesNonRetryableStatusError(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestFolderSync_syncKeyReadError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be reached")
+	})
+	c.cfg.State = &errStateStore{inner: NewMemoryState(), syncKeyErr: errSentinel("read fail")}
+	if _, err := c.FolderSync(context.Background()); err == nil {
+		t.Error("want error from SyncKey read")
+	}
+}
+
+func TestFolderSync_postErrorPropagates(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	})
+	if _, err := c.FolderSync(context.Background()); err == nil {
+		t.Error("want HTTP error")
+	}
+}
+
+func TestFolderSync_emptyResponseRejected(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200)
+	})
+	if _, err := c.FolderSync(context.Background()); err == nil {
+		t.Error("want error on empty response")
+	}
+}
+
+func TestFolderSync_missingSyncKeyRejected(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageFolderHierarchy, "FolderSync",
+				wbxml.E(wbxml.PageFolderHierarchy, "Status", wbxml.Text("1")),
+				// no <SyncKey>
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_, err := c.FolderSync(context.Background())
+	if err == nil || !contains(err.Error(), "missing SyncKey") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestFolderSync_skipsNonElementChangesChildren(t *testing.T) {
+	// Stray text inside <Changes> must be skipped without affecting the
+	// real Add/Update/Delete entries; same for stray text inside an Add.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageFolderHierarchy, "FolderSync",
+				wbxml.E(wbxml.PageFolderHierarchy, "Status", wbxml.Text("1")),
+				wbxml.E(wbxml.PageFolderHierarchy, "SyncKey", wbxml.Text("K")),
+				wbxml.E(wbxml.PageFolderHierarchy, "Changes",
+					wbxml.Text("stray"),
+					wbxml.E(wbxml.PageFolderHierarchy, "Add",
+						wbxml.Text("stray-inside-add"),
+						wbxml.E(wbxml.PageFolderHierarchy, "ServerId", wbxml.Text("1")),
+						wbxml.E(wbxml.PageFolderHierarchy, "DisplayName", wbxml.Text("Inbox")),
+					),
+				),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	res, err := c.FolderSync(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Added) != 1 || res.Added[0].DisplayName != "Inbox" {
+		t.Errorf("added = %+v", res.Added)
+	}
+}
+
+func TestFolderSync_resetSetSyncKeyError(t *testing.T) {
+	// First call returns InvalidSyncKey; the reset SetSyncKey then fails.
+	calls := 0
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(invalidSyncKeyResponse())
+	})
+	es := &errStateStore{inner: NewMemoryState()}
+	c.cfg.State = es
+	_ = es.inner.SetSyncKey(context.Background(), FolderRootID, "STALE")
+	es.setSyncKeyErr = errSentinel("can't write")
+	_, err := c.FolderSync(context.Background())
+	if err == nil || !contains(err.Error(), "reset sync key") {
+		t.Errorf("err = %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("calls = %d, want 1 (no retry after reset failure)", calls)
+	}
+}
+
+func TestFolderSync_persistSetSyncKeyError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(folderSyncResponse("NEWKEY"))
+	})
+	es := &errStateStore{inner: NewMemoryState(), setSyncKeyErr: errSentinel("disk full")}
+	c.cfg.State = es
+	if _, err := c.FolderSync(context.Background()); err == nil {
+		t.Error("want error from persist failure")
+	}
+}
+
+func TestParseFolder_skipsNonElement(t *testing.T) {
+	// parseFolder ignores stray text children alongside the real ServerId etc.
+	e := wbxml.E(wbxml.PageFolderHierarchy, "Add",
+		wbxml.Text("stray"),
+		wbxml.E(wbxml.PageFolderHierarchy, "ServerId", wbxml.Text("42")),
+		wbxml.E(wbxml.PageFolderHierarchy, "DisplayName", wbxml.Text("Inbox")),
+		wbxml.E(wbxml.PageFolderHierarchy, "Type", wbxml.Text("2")),
+	)
+	got := parseFolder(e)
+	if got.ServerID != "42" || got.DisplayName != "Inbox" || got.Type != FolderTypeInbox {
+		t.Errorf("got %+v", got)
+	}
+}
+
+func contains(s, sub string) bool { return strings.Contains(s, sub) }
 
 func TestFolderType_String(t *testing.T) {
 	cases := map[FolderType]string{

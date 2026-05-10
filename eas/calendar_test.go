@@ -342,6 +342,67 @@ func TestRespondInvite_basic(t *testing.T) {
 	}
 }
 
+func TestRespondInvite_postErrorPropagates(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusBadGateway)
+	})
+	if _, err := c.RespondInvite(context.Background(), "inbox", "id", MeetingAccept); err == nil {
+		t.Error("want HTTP error")
+	}
+}
+
+func TestRespondInvite_emptyResponseRejected(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200) // empty body → nil resp
+	})
+	_, err := c.RespondInvite(context.Background(), "inbox", "id", MeetingAccept)
+	if err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestRespondInvite_topLevelStatusErrorWithoutResult(t *testing.T) {
+	// Some servers reject the request with only a top-level <Status>; the
+	// fall-through path (no <Result>) must surface that as a StatusError.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageMeetingResponse, "MeetingResponse",
+				wbxml.E(wbxml.PageMeetingResponse, "Status", wbxml.Text("4")),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	if _, err := c.RespondInvite(context.Background(), "inbox", "id", MeetingDecline); !IsStatusCode(err, 4) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestRespondInvite_resultWithoutStatusFillsOK(t *testing.T) {
+	// <Result> present but with no <Status> child: caller should still see
+	// a StatusOK result (and any CalendarID echoed back).
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageMeetingResponse, "MeetingResponse",
+				wbxml.E(wbxml.PageMeetingResponse, "Result",
+					wbxml.E(wbxml.PageMeetingResponse, "CalendarId", wbxml.Text("cal:7")),
+				),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	res, err := c.RespondInvite(context.Background(), "inbox", "id", MeetingAccept)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.CalendarID != "cal:7" || res.Status != StatusOK {
+		t.Errorf("res = %+v", res)
+	}
+}
+
 func TestParseCalendarField_allFields(t *testing.T) {
 	out := EventItem{}
 	cases := []struct {

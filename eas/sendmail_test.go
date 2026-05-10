@@ -120,6 +120,44 @@ func TestSmartForward_validatesArgs(t *testing.T) {
 	}
 }
 
+func TestSmartReply_emptyMIMERejected(t *testing.T) {
+	c, _, _ := newTestClient(t, nil)
+	err := c.SmartReply(context.Background(), ReplyForwardOptions{
+		FolderID: "inbox",
+		ServerID: "inbox:1",
+	})
+	if err == nil || !strings.Contains(err.Error(), "MIME") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestSendMail_postErrorPropagates(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	})
+	if err := c.SendMail(context.Background(), SendMailOptions{MIME: []byte("x")}); err == nil {
+		t.Error("want error from transport")
+	}
+}
+
+func TestSendMail_status1IsSuccess(t *testing.T) {
+	// Server returns a body with Status=1; sendMailLike must treat that as
+	// success even though the response is non-empty.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageComposeMail, "SendMail",
+				wbxml.E(wbxml.PageComposeMail, "Status", wbxml.Text("1")),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	if err := c.SendMail(context.Background(), SendMailOptions{MIME: []byte("x")}); err != nil {
+		t.Errorf("Status=1 should be success, got %v", err)
+	}
+}
+
 func TestSendMail_statusErrorPropagated(t *testing.T) {
 	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		// EAS reports SendMail errors via WBXML status.

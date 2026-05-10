@@ -106,6 +106,33 @@ func TestSignMIME_validation(t *testing.T) {
 	}
 }
 
+func TestSignMIME_includesIntermediates(t *testing.T) {
+	leaf, leafKey := makeCert(t, false)
+	intCA, _ := makeCert(t, false)
+	signed, err := SignMIME([]byte("hi"), SMIMESigner{
+		Certificate:   leaf,
+		PrivateKey:    leafKey,
+		Intermediates: []*x509.Certificate{intCA},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(signed), "multipart/signed") {
+		t.Error("missing multipart/signed envelope")
+	}
+}
+
+func TestSignAndEncryptMIME_signerErrorPropagates(t *testing.T) {
+	rcptCert, _ := makeCert(t, false)
+	// Empty signer fails the SignMIME validation; SignAndEncryptMIME must
+	// surface that error rather than continue to encrypt.
+	_, err := SignAndEncryptMIME([]byte("x"), SMIMESigner{}, []*x509.Certificate{rcptCert})
+	if err == nil || !strings.Contains(err.Error(), "Certificate") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+
 func TestEncryptMIME_validation(t *testing.T) {
 	if _, err := EncryptMIME([]byte("x"), nil); err == nil {
 		t.Error("want error with no recipients")

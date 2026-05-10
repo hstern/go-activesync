@@ -180,6 +180,27 @@ func TestParsePolicy_allFields(t *testing.T) {
 	}
 }
 
+func TestParsePolicy_skipsNonHashChildrenInApprovedList(t *testing.T) {
+	// Spec only allows <Hash> children inside <ApprovedApplicationList>; a
+	// rogue <ApplicationName> sibling must be ignored, not parsed as a hash.
+	doc := wbxml.E(wbxml.PageProvision, "EASProvisionDoc",
+		wbxml.E(wbxml.PageProvision, "ApprovedApplicationList",
+			wbxml.E(wbxml.PageProvision, "ApplicationName", wbxml.Text("Stray")),
+			wbxml.E(wbxml.PageProvision, "Hash",
+				wbxml.E(wbxml.PageProvision, "ApplicationName", wbxml.Text("Real")),
+				wbxml.Text("HASHBYTES"),
+			),
+		),
+	)
+	p := parsePolicy(doc)
+	if p == nil {
+		t.Fatal("parsePolicy returned nil")
+	}
+	if len(p.ApprovedApplicationList) != 1 || p.ApprovedApplicationList[0].Name != "Real" {
+		t.Errorf("approved = %+v (stray <ApplicationName> leaked through)", p.ApprovedApplicationList)
+	}
+}
+
 func TestLastPolicy_nilByDefault(t *testing.T) {
 	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(200)

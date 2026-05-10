@@ -255,6 +255,30 @@ func TestParseEmailItem_bodyPreviewWinsOverTopLevelPreview(t *testing.T) {
 	}
 }
 
+func TestParseEmailItem_skipsNonElementChildren(t *testing.T) {
+	// Both top-level (parseEmailItem) and Body-level (parseBody) iterators
+	// must skip non-element children and elements from unrelated codepages
+	// without affecting the fields they recognise.
+	app := wbxml.E(wbxml.PageAirSync, "ApplicationData",
+		wbxml.Text("stray text"), // top-level non-element
+		wbxml.E(wbxml.PageAirSync, "Class", wbxml.Text("Email")), // unrelated codepage
+		wbxml.E(wbxml.PageEmail, "Subject", wbxml.Text("S")),
+		wbxml.E(wbxml.PageAirSyncBase, "Body",
+			wbxml.Text("stray inside body"), // body-level non-element
+			wbxml.E(wbxml.PageEmail, "Subject", wbxml.Text("ignored — wrong page")),
+			wbxml.E(wbxml.PageAirSyncBase, "Type", wbxml.Text("1")),
+			wbxml.E(wbxml.PageAirSyncBase, "Data", wbxml.Text("body bytes")),
+		),
+	)
+	got := parseEmailItem("x", app)
+	if got.Subject != "S" {
+		t.Errorf("Subject = %q (top-level loop swallowed legitimate field)", got.Subject)
+	}
+	if got.Body != "body bytes" || got.BodyType != BodyTypePlain {
+		t.Errorf("body parse = %+v", got)
+	}
+}
+
 func TestParseEmailItem_truncatedBody(t *testing.T) {
 	app := wbxml.E(wbxml.PageAirSync, "ApplicationData",
 		wbxml.E(wbxml.PageAirSyncBase, "Body",

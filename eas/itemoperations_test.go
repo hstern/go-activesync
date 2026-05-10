@@ -127,6 +127,121 @@ func TestFetchEmail_emptyArgs(t *testing.T) {
 	}
 }
 
+func TestFetchEmail_emitsTruncationSize(t *testing.T) {
+	c, cap, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(itemopFetchResponse("inbox:42", []byte("x")))
+	})
+	_, _ = c.FetchEmail(context.Background(), "inbox", "inbox:42", FetchEmailOptions{
+		BodyType:           BodyTypeMIME,
+		BodyTruncationSize: 4096,
+	})
+	req, _ := wbxml.Unmarshal(cap.body, wbxml.DefaultRegistry())
+	bp := req.Root.Find("BodyPreference")
+	if ts := bp.Find("TruncationSize"); ts == nil || ts.TextContent() != "4096" {
+		t.Errorf("TruncationSize = %v", ts)
+	}
+}
+
+func TestFetchEmail_postErrorPropagates(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	})
+	if _, err := c.FetchEmail(context.Background(), "inbox", "x", FetchEmailOptions{}); err == nil {
+		t.Error("want HTTP error")
+	}
+}
+
+func TestFetchEmail_emptyResponseRejected(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200) // empty body
+	})
+	if _, err := c.FetchEmail(context.Background(), "inbox", "x", FetchEmailOptions{}); err == nil {
+		t.Error("want error on empty response")
+	}
+}
+
+func TestFetchEmail_responseWithoutFetchSkipped(t *testing.T) {
+	// First Response has no Fetch (must skip), second has the real data.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageItemOperations, "ItemOperations",
+				wbxml.E(wbxml.PageItemOperations, "Status", wbxml.Text("1")),
+				wbxml.E(wbxml.PageItemOperations, "Response", // no Fetch — must skip
+					wbxml.E(wbxml.PageItemOperations, "Move",
+						wbxml.E(wbxml.PageItemOperations, "Status", wbxml.Text("1")),
+					),
+				),
+				wbxml.E(wbxml.PageItemOperations, "Response",
+					wbxml.E(wbxml.PageItemOperations, "Fetch",
+						wbxml.E(wbxml.PageItemOperations, "Status", wbxml.Text("1")),
+						wbxml.E(wbxml.PageItemOperations, "Properties",
+							wbxml.E(wbxml.PageEmail, "Subject", wbxml.Text("Hi")),
+						),
+					),
+				),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	got, err := c.FetchEmail(context.Background(), "inbox", "x", FetchEmailOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Subject != "Hi" {
+		t.Errorf("Subject = %q", got.Subject)
+	}
+}
+
+func TestFetchEmail_fetchMissingProperties(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageItemOperations, "ItemOperations",
+				wbxml.E(wbxml.PageItemOperations, "Status", wbxml.Text("1")),
+				wbxml.E(wbxml.PageItemOperations, "Response",
+					wbxml.E(wbxml.PageItemOperations, "Fetch",
+						wbxml.E(wbxml.PageItemOperations, "Status", wbxml.Text("1")),
+						// no Properties
+					),
+				),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_, err := c.FetchEmail(context.Background(), "inbox", "x", FetchEmailOptions{})
+	if err == nil || !strings.Contains(err.Error(), "<Properties>") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestFetchEmail_responsesWithNoFetchAtAll(t *testing.T) {
+	// Server reports Response elements but none contain Fetch — falls
+	// through to the "no Fetch response" error.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageItemOperations, "ItemOperations",
+				wbxml.E(wbxml.PageItemOperations, "Status", wbxml.Text("1")),
+				wbxml.E(wbxml.PageItemOperations, "Response",
+					wbxml.E(wbxml.PageItemOperations, "Move",
+						wbxml.E(wbxml.PageItemOperations, "Status", wbxml.Text("1")),
+					),
+				),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_, err := c.FetchEmail(context.Background(), "inbox", "x", FetchEmailOptions{})
+	if err == nil || !strings.Contains(err.Error(), "no Fetch response") {
+		t.Errorf("err = %v", err)
+	}
+}
+
 func TestFetchEmail_noResponse(t *testing.T) {
 	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		doc := &wbxml.Document{

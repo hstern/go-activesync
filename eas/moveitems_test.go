@@ -90,6 +90,52 @@ func TestMoveItems_multipleItems(t *testing.T) {
 	}
 }
 
+func TestMoveItems_postErrorPropagates(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "boom", http.StatusBadGateway)
+	})
+	if _, err := c.MoveItems(context.Background(), "src", "dst", []string{"a"}); err == nil {
+		t.Error("want HTTP error")
+	}
+}
+
+func TestMoveItems_emptyResponseRejected(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200) // empty body → nil resp
+	})
+	_, err := c.MoveItems(context.Background(), "src", "dst", []string{"a"})
+	if err == nil || !strings.Contains(err.Error(), "empty response") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestMoveItems_skipsNonResponseChildren(t *testing.T) {
+	// Server may include other elements (e.g. <Status>) at the top level;
+	// the parser must skip anything that isn't a <Response>.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageMove, "MoveItems",
+				wbxml.E(wbxml.PageMove, "Status", wbxml.Text("1")), // not a Response
+				wbxml.E(wbxml.PageMove, "Response",
+					wbxml.E(wbxml.PageMove, "SrcMsgId", wbxml.Text("a")),
+					wbxml.E(wbxml.PageMove, "DstMsgId", wbxml.Text("a-new")),
+					wbxml.E(wbxml.PageMove, "Status", wbxml.Text("3")),
+				),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	res, err := c.MoveItems(context.Background(), "src", "dst", []string{"a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 1 || res[0].SrcServerID != "a" {
+		t.Errorf("res = %+v", res)
+	}
+}
+
 func TestMoveItems_validation(t *testing.T) {
 	c, _, _ := newTestClient(t, nil)
 	cases := []struct {

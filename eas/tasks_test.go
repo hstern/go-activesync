@@ -184,6 +184,63 @@ func TestDeleteTask_emitsDelete(t *testing.T) {
 	}
 }
 
+func TestParseTaskItem_nilSafe(t *testing.T) {
+	got := parseTaskItem("id", nil)
+	if got.ServerID != "id" || got.Subject != "" {
+		t.Errorf("got %+v", got)
+	}
+}
+
+func TestParseTaskItem_skipsNonElementAndForeignBodyChildren(t *testing.T) {
+	app := wbxml.E(wbxml.PageAirSync, "ApplicationData",
+		wbxml.Text("stray"), // top-level non-element → skip
+		wbxml.E(wbxml.PageTasks, "Subject", wbxml.Text("S")),
+		wbxml.E(wbxml.PageAirSyncBase, "Body",
+			wbxml.E(wbxml.PageEmail, "Subject", wbxml.Text("ignored — wrong page")),
+			wbxml.E(wbxml.PageAirSyncBase, "Data", wbxml.Text("body bytes")),
+		),
+	)
+	got := parseTaskItem("id", app)
+	if got.Subject != "S" || got.Body != "body bytes" {
+		t.Errorf("got %+v", got)
+	}
+}
+
+func TestSyncTasks_parsesChangeAndDelete(t *testing.T) {
+	change := wbxml.E(wbxml.PageAirSync, "Change",
+		wbxml.E(wbxml.PageAirSync, "ServerId", wbxml.Text("t-2")),
+		wbxml.E(wbxml.PageAirSync, "ApplicationData",
+			wbxml.E(wbxml.PageTasks, "Subject", wbxml.Text("changed")),
+		),
+	)
+	del := wbxml.E(wbxml.PageAirSync, "Delete",
+		wbxml.E(wbxml.PageAirSync, "ServerId", wbxml.Text("t-3")),
+	)
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(pimSyncResponse("tasks", "T1", change, del))
+	})
+	res, err := c.SyncTasks(context.Background(), "tasks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Changed) != 1 || res.Changed[0].Subject != "changed" {
+		t.Errorf("changed = %+v", res.Changed)
+	}
+	if len(res.Deleted) != 1 || res.Deleted[0] != "t-3" {
+		t.Errorf("deleted = %v", res.Deleted)
+	}
+}
+
+func TestSyncTasks_postErrorPropagates(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	})
+	if _, err := c.SyncTasks(context.Background(), "tasks"); err == nil {
+		t.Error("want HTTP error")
+	}
+}
+
 func TestCompleteTask_setsCompleteFlag(t *testing.T) {
 	c, lastBody := singleCallSyncServer(t, "tasks")
 	if err := c.CompleteTask(context.Background(), "tasks", "t-1"); err != nil {

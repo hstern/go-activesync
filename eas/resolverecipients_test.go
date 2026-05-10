@@ -243,6 +243,49 @@ func TestResolveRecipients_perResponseStatusKept(t *testing.T) {
 	}
 }
 
+func TestResolveRecipients_postErrorPropagates(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	})
+	if _, err := c.ResolveRecipients(context.Background(), []string{"alice"}, ResolveOptions{}); err == nil {
+		t.Fatal("want HTTP error")
+	}
+}
+
+func TestResolveRecipients_skipsNonCertificateChildren(t *testing.T) {
+	// Spec only allows <Certificate> inside <Certificates>; a stray child
+	// must be ignored without polluting the parsed cert list.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageResolveRecipients, "ResolveRecipients",
+			wbxml.E(wbxml.PageResolveRecipients, "Status", wbxml.Text("1")),
+			wbxml.E(wbxml.PageResolveRecipients, "Response",
+				wbxml.E(wbxml.PageResolveRecipients, "To", wbxml.Text("alice")),
+				wbxml.E(wbxml.PageResolveRecipients, "Status", wbxml.Text("1")),
+				wbxml.E(wbxml.PageResolveRecipients, "Recipient",
+					wbxml.E(wbxml.PageResolveRecipients, "Type", wbxml.Text("1")),
+					wbxml.E(wbxml.PageResolveRecipients, "Certificates",
+						wbxml.E(wbxml.PageResolveRecipients, "Status", wbxml.Text("1")), // not a Certificate — must skip
+						wbxml.E(wbxml.PageResolveRecipients, "Certificate", wbxml.Opaque([]byte("REAL-CERT"))),
+					),
+				),
+			),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	res, err := c.ResolveRecipients(context.Background(), []string{"alice"}, ResolveOptions{CertificateRetrieval: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 1 || len(res[0].Recipients) != 1 || len(res[0].Recipients[0].Certificates) != 1 {
+		t.Fatalf("got %+v", res)
+	}
+	if string(res[0].Recipients[0].Certificates[0]) != "REAL-CERT" {
+		t.Errorf("cert = %q", res[0].Recipients[0].Certificates[0])
+	}
+}
+
 // bytesEqual is a tiny local helper so this file doesn't need to import
 // "bytes" just for the certificate / picture comparisons above.
 func bytesEqual(a, b []byte) bool {

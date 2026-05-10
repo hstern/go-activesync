@@ -189,6 +189,74 @@ func TestParseException_allFields(t *testing.T) {
 	}
 }
 
+func TestRecurrence_extendedFieldsRoundTrip(t *testing.T) {
+	r := &Recurrence{
+		Type:           RecurrenceMonthlyByDay,
+		Interval:       1,
+		Occurrences:    12,
+		DayOfWeek:      DowMonday,
+		WeekOfMonth:    2,
+		MonthOfYear:    6,
+		IsLeapMonth:    true,
+		FirstDayOfWeek: 1,
+		CalendarType:   1,
+	}
+	el := recurrenceToWBXML(r)
+	got := recurrenceFromWBXML(el)
+	if got.Occurrences != 12 || got.WeekOfMonth != 2 || got.MonthOfYear != 6 ||
+		!got.IsLeapMonth || got.FirstDayOfWeek != 1 || got.CalendarType != 1 {
+		t.Errorf("got %+v", got)
+	}
+}
+
+func TestRecurrence_nilSafe(t *testing.T) {
+	if recurrenceToWBXML(nil) != nil {
+		t.Error("recurrenceToWBXML(nil) should be nil")
+	}
+	if recurrenceFromWBXML(nil) != nil {
+		t.Error("recurrenceFromWBXML(nil) should be nil")
+	}
+}
+
+func TestRecurrenceFromWBXML_skipsNonElement(t *testing.T) {
+	// Stray text alongside the real fields must be ignored.
+	el := wbxml.E(wbxml.PageCalendar, "Recurrence",
+		wbxml.Text("stray"),
+		wbxml.E(wbxml.PageCalendar, "Recurrence_Type", wbxml.Text("1")),
+		wbxml.E(wbxml.PageCalendar, "Recurrence_Interval", wbxml.Text("2")),
+	)
+	got := recurrenceFromWBXML(el)
+	if got.Type != RecurrenceWeekly || got.Interval != 2 {
+		t.Errorf("got %+v", got)
+	}
+}
+
+func TestException_encodesAllDayReminderAndBody(t *testing.T) {
+	x := Exception{
+		ExceptionStartTime: time.Date(2026, 5, 15, 10, 0, 0, 0, time.UTC),
+		AllDayEvent:        true,
+		Reminder:           30,
+		Body:               "exception body",
+	}
+	el := exceptionToWBXML(x)
+	got := parseException(el)
+	if !got.AllDayEvent || got.Reminder != 30 || got.Body != "exception body" {
+		t.Errorf("got %+v", got)
+	}
+}
+
+func TestParseException_skipsNonElement(t *testing.T) {
+	el := wbxml.E(wbxml.PageCalendar, "Exception",
+		wbxml.Text("stray"),
+		wbxml.E(wbxml.PageCalendar, "ExceptionStartTime", wbxml.Text("2026-05-15T10:00:00Z")),
+		wbxml.E(wbxml.PageCalendar, "Subject", wbxml.Text("S")),
+	)
+	got := parseException(el)
+	if got.Subject != "S" || got.ExceptionStartTime.IsZero() {
+		t.Errorf("got %+v", got)
+	}
+}
+
 func TestUTF16RoundTrip(t *testing.T) {
 	in := "héllo 世界 🌍"
 	enc := utf16Encode(in)

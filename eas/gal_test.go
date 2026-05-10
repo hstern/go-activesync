@@ -92,6 +92,100 @@ func TestGALSearch_emptyQueryRejected(t *testing.T) {
 	}
 }
 
+func TestGALSearch_defaultsLimit(t *testing.T) {
+	// limit=0 must use the default range (0-24).
+	c, cap, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200)
+	})
+	_, _ = c.GALSearch(context.Background(), "alice", 0)
+	req, _ := wbxml.Unmarshal(cap.body, wbxml.DefaultRegistry())
+	if r := req.Root.Find("Range"); r == nil || r.TextContent() != "0-24" {
+		t.Errorf("Range = %v, want '0-24' for default limit", r)
+	}
+}
+
+func TestGALSearch_postErrorPropagates(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	})
+	if _, err := c.GALSearch(context.Background(), "alice", 5); err == nil {
+		t.Error("want HTTP error")
+	}
+}
+
+func TestGALSearch_emptyResponseRejected(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200) // empty body → nil resp
+	})
+	if _, err := c.GALSearch(context.Background(), "alice", 5); err == nil {
+		t.Error("want error on empty response")
+	}
+}
+
+func TestGALSearch_missingStoreRejected(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageSearch, "Search",
+				wbxml.E(wbxml.PageSearch, "Status", wbxml.Text("1")),
+				// no <Store>
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	if _, err := c.GALSearch(context.Background(), "alice", 5); err == nil {
+		t.Error("want error when Store is missing")
+	}
+}
+
+func TestGALSearch_nestedStoreStatusError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageSearch, "Search",
+				wbxml.E(wbxml.PageSearch, "Status", wbxml.Text("1")),
+				wbxml.E(wbxml.PageSearch, "Store",
+					wbxml.E(wbxml.PageSearch, "Status", wbxml.Text("4")),
+				),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	if _, err := c.GALSearch(context.Background(), "alice", 5); !IsStatusCode(err, 4) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestGALSearch_resultWithoutPropertiesSkipped(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageSearch, "Search",
+				wbxml.E(wbxml.PageSearch, "Status", wbxml.Text("1")),
+				wbxml.E(wbxml.PageSearch, "Store",
+					wbxml.E(wbxml.PageSearch, "Result"), // no Properties — must skip
+					wbxml.E(wbxml.PageSearch, "Result",
+						wbxml.E(wbxml.PageSearch, "Properties",
+							wbxml.E(wbxml.PageGAL, "EmailAddress", wbxml.Text("alice@x")),
+						),
+					),
+				),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	res, err := c.GALSearch(context.Background(), "alice", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Entries) != 1 || res.Entries[0].EmailAddress != "alice@x" {
+		t.Errorf("entries = %+v", res.Entries)
+	}
+}
+
 func TestGALSearch_serverError(t *testing.T) {
 	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		doc := &wbxml.Document{
