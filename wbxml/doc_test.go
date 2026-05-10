@@ -98,6 +98,13 @@ func TestFindAll_documentOrder(t *testing.T) {
 	}
 }
 
+func TestFindAll_nilSafe(t *testing.T) {
+	var nilElem *Element
+	if got := nilElem.FindAll("x"); got != nil {
+		t.Errorf("FindAll on nil = %v", got)
+	}
+}
+
 func TestNodeInterfaceCompliance(t *testing.T) {
 	// Compile-time check that each concrete type satisfies Node.
 	var _ Node = &Element{}

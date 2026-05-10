@@ -45,6 +45,25 @@ func TestRegistry_AddRejectsOutOfRangeTag(t *testing.T) {
 	r.Add(&Codepage{Number: 1, Name: "X", Tags: map[byte]string{0x04: "Bad"}})
 }
 
+func TestRegistry_AddRejectsHighIdentity(t *testing.T) {
+	// 0x40 collides with the content-flag bit on the tag byte, so it is
+	// reserved. Anything in 0x40..0xFF must be rejected by Add.
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic for tag identity above 0x3F")
+		}
+	}()
+	r := NewRegistry()
+	r.Add(&Codepage{Number: 1, Name: "X", Tags: map[byte]string{0x40: "Bad"}})
+}
+
+func TestRegistry_TagID_UnknownPage(t *testing.T) {
+	r := NewRegistry()
+	if id, ok := r.TagID(99, "Foo"); ok || id != 0 {
+		t.Errorf("TagID on unknown page = (0x%02X, %v); want (0, false)", id, ok)
+	}
+}
+
 func TestRegistry_AddRejectsDuplicatePage(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {

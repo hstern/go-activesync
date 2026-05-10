@@ -5,6 +5,7 @@ package wbxml
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -174,5 +175,79 @@ func TestMarshal_RejectsNilRoot(t *testing.T) {
 func TestMarshal_RejectsNilRegistry(t *testing.T) {
 	if _, err := Marshal(&Document{Root: E(0, "x")}, nil); err == nil {
 		t.Fatal("want error for nil registry")
+	}
+}
+
+func TestMarshal_DefaultsHeaderFields(t *testing.T) {
+	// Version, PublicID, and Charset all zero — Marshal should fill in
+	// defaultVersion (0x03), defaultPublicID (0x01), and defaultCharset
+	// (0x6A) so the wire bytes are valid for an EAS server.
+	doc := &Document{Root: E(PageFolderHierarchy, "FolderSync")}
+	got, err := Marshal(doc, DefaultRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0] != defaultVersion {
+		t.Errorf("version byte = 0x%02X, want 0x%02X", got[0], defaultVersion)
+	}
+	if got[1] != byte(defaultPublicID) {
+		t.Errorf("public id byte = 0x%02X, want 0x%02X", got[1], defaultPublicID)
+	}
+	if got[2] != byte(defaultCharset) {
+		t.Errorf("charset byte = 0x%02X, want 0x%02X", got[2], defaultCharset)
+	}
+}
+
+func TestMarshal_ChildlessElement(t *testing.T) {
+	// Element with no children: tag byte must omit the content flag and
+	// no trailing END token is emitted.
+	doc := &Document{Root: E(PageFolderHierarchy, "FolderSync")}
+	got, err := Marshal(doc, DefaultRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []byte{
+		0x03, 0x01, 0x6A, 0x00,
+		0x00, 0x07, // SWITCH_PAGE FolderHierarchy
+		0x16, // FolderSync (id 0x16) — no content flag, no END
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("got=% X want=% X", got, want)
+	}
+	doc2, err := Unmarshal(got, DefaultRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc2.Root.Children) != 0 {
+		t.Errorf("round-trip children = %d, want 0", len(doc2.Root.Children))
+	}
+}
+
+func TestMarshal_RejectsNilChildElement(t *testing.T) {
+	// A typed-nil *Element passed as a child should be caught by the
+	// "nil element" guard inside writeElement.
+	doc := &Document{
+		Root: E(PageAirSync, "Sync", (*Element)(nil)),
+	}
+	_, err := Marshal(doc, DefaultRegistry())
+	if err == nil || !strings.Contains(err.Error(), "nil element") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// fakeNode satisfies wbxml.Node but is none of *Element / Text / Opaque, so
+// writeChild should fall through to the unsupported-type branch. Defined
+// in-package because isNode is unexported.
+type fakeNode struct{}
+
+func (fakeNode) isNode() {}
+
+func TestMarshal_RejectsUnsupportedNodeType(t *testing.T) {
+	doc := &Document{
+		Root: E(PageAirSync, "Sync", fakeNode{}),
+	}
+	_, err := Marshal(doc, DefaultRegistry())
+	if err == nil || !strings.Contains(err.Error(), "unsupported node type") {
+		t.Errorf("err = %v", err)
 	}
 }
