@@ -113,20 +113,17 @@ jobs:
 
       # Test Analytics: upload junit.xml even when tests fail so flaky
       # / consistently-failing tests show up in Codecov dashboards.
-      # Use codecov-action@v6 with report_type: test_results — the
-      # standalone test-results-action is deprecated and the unified
-      # action is what Codecov now reads from for the Tests page.
-      - uses: codecov/codecov-action@v6
+      # `codecov/test-results-action@v5` is the supported action per
+      # https://docs.codecov.com/docs/test-analytics — the unified
+      # codecov-action does not file uploads correctly into the Tests
+      # page (it routes them through upload-coverage no matter how
+      # `report_type` is set, which silently drops the JUnit data).
+      - uses: codecov/test-results-action@v5
         if: ${{ !cancelled() }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./junit.xml
           flags: unittests
-          report_type: test_results
-          # Without this the action runs `codecov upload-coverage`
-          # which silently mis-files JUnit through the coverage
-          # pipeline; `upload-test-results` is the right subcommand.
-          run_command: upload-test-results
           fail_ci_if_error: false
 
   # ------------------------------------------------------------------------
@@ -182,17 +179,12 @@ jobs:
 
       # Surface integration-test analytics separately from unit so
       # Codecov can track Z-Push-flakiness independently of pure-Go bugs.
-      - uses: codecov/codecov-action@v6
+      - uses: codecov/test-results-action@v5
         if: ${{ !cancelled() }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./junit-integration.xml
           flags: integration
-          report_type: test_results
-          # Without this the action runs `codecov upload-coverage`
-          # which silently mis-files JUnit through the coverage
-          # pipeline; `upload-test-results` is the right subcommand.
-          run_command: upload-test-results
           fail_ci_if_error: false
 
       - name: container logs on failure
