@@ -357,6 +357,275 @@ func TestAddItemViaSync_invalidSyncKeyRetries(t *testing.T) {
 	}
 }
 
+func TestSyncContacts_parsesChangeAndDelete(t *testing.T) {
+	change := wbxml.E(wbxml.PageAirSync, "Change",
+		wbxml.E(wbxml.PageAirSync, "ServerId", wbxml.Text("c-2")),
+		wbxml.E(wbxml.PageAirSync, "ApplicationData",
+			wbxml.E(wbxml.PageContacts, "FirstName", wbxml.Text("Updated")),
+		),
+	)
+	del := wbxml.E(wbxml.PageAirSync, "Delete",
+		wbxml.E(wbxml.PageAirSync, "ServerId", wbxml.Text("c-3")),
+	)
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(pimSyncResponse("contacts", "C1", change, del))
+	})
+	res, err := c.SyncContacts(context.Background(), "contacts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Changed) != 1 || res.Changed[0].FirstName != "Updated" {
+		t.Errorf("changed = %+v", res.Changed)
+	}
+	if len(res.Deleted) != 1 || res.Deleted[0] != "c-3" {
+		t.Errorf("deleted = %v", res.Deleted)
+	}
+}
+
+func TestSyncContacts_postErrorPropagates(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	})
+	if _, err := c.SyncContacts(context.Background(), "contacts"); err == nil {
+		t.Error("want HTTP error")
+	}
+}
+
+func TestGenericSyncFolder_emptyResponseUsesOldKey(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200) // empty body
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "contacts", "PRIOR")
+	res, err := c.SyncContacts(context.Background(), "contacts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.SyncKey != "PRIOR" {
+		t.Errorf("expected old key carried through; got %q", res.SyncKey)
+	}
+}
+
+func TestGenericSyncFolder_topLevelStatusError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+			wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("8")),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "contacts", "K")
+	if _, err := c.SyncContacts(context.Background(), "contacts"); !IsStatusCode(err, 8) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestGenericSyncFolder_missingCollection(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+			wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("1")),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "contacts", "K")
+	if _, err := c.SyncContacts(context.Background(), "contacts"); err == nil {
+		t.Error("want missing-Collection error")
+	}
+}
+
+func TestGenericSyncFolder_collectionStatusError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+			wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("1")),
+			wbxml.E(wbxml.PageAirSync, "Collections",
+				wbxml.E(wbxml.PageAirSync, "Collection",
+					wbxml.E(wbxml.PageAirSync, "SyncKey", wbxml.Text("K")),
+					wbxml.E(wbxml.PageAirSync, "CollectionId", wbxml.Text("contacts")),
+					wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("8")),
+				),
+			),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "contacts", "K")
+	if _, err := c.SyncContacts(context.Background(), "contacts"); !IsStatusCode(err, 8) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestGenericSyncFolder_missingSyncKey(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+			wbxml.E(wbxml.PageAirSync, "Collections",
+				wbxml.E(wbxml.PageAirSync, "Collection",
+					wbxml.E(wbxml.PageAirSync, "CollectionId", wbxml.Text("contacts")),
+					wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("1")),
+				),
+			),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	// Pre-set key to "" so newKey starts empty and stays empty.
+	_ = c.cfg.State.SetSyncKey(context.Background(), "contacts", "")
+	if _, err := c.SyncContacts(context.Background(), "contacts"); err == nil {
+		t.Error("want missing-SyncKey error")
+	}
+}
+
+func TestGenericSyncFolder_skipsNonElementCommands(t *testing.T) {
+	// Stray text inside <Commands> must be skipped without affecting parse.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+			wbxml.E(wbxml.PageAirSync, "Collections",
+				wbxml.E(wbxml.PageAirSync, "Collection",
+					wbxml.E(wbxml.PageAirSync, "SyncKey", wbxml.Text("K2")),
+					wbxml.E(wbxml.PageAirSync, "CollectionId", wbxml.Text("contacts")),
+					wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("1")),
+					wbxml.E(wbxml.PageAirSync, "Commands",
+						wbxml.Text("stray"),
+						wbxml.E(wbxml.PageAirSync, "Add",
+							wbxml.E(wbxml.PageAirSync, "ServerId", wbxml.Text("1")),
+							wbxml.E(wbxml.PageAirSync, "ApplicationData",
+								wbxml.E(wbxml.PageContacts, "FirstName", wbxml.Text("F")),
+							),
+						),
+					),
+				),
+			),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	res, err := c.SyncContacts(context.Background(), "contacts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Added) != 1 || res.Added[0].FirstName != "F" {
+		t.Errorf("added = %+v", res.Added)
+	}
+}
+
+func TestGenericSyncFolder_persistKeyError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(pimSyncResponse("contacts", "NEWKEY"))
+	})
+	es := &errStateStore{inner: NewMemoryState(), setSyncKeyErr: errSentinel("disk full")}
+	c.cfg.State = es
+	if _, err := c.SyncContacts(context.Background(), "contacts"); err == nil {
+		t.Error("want persist error")
+	}
+}
+
+func TestGenericSyncFolder_syncKeyReadError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be reached")
+	})
+	c.cfg.State = &errStateStore{inner: NewMemoryState(), syncKeyErr: errSentinel("read fail")}
+	if _, err := c.SyncContacts(context.Background(), "contacts"); err == nil {
+		t.Error("want SyncKey read error")
+	}
+}
+
+func TestAddItemViaSync_emptyResponseReturnsClientID(t *testing.T) {
+	// Server replies with empty 200 OK; addItemViaSync returns the
+	// client-generated id since there's no server id available.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200) // empty body
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "contacts", "K1")
+	id, err := c.CreateContact(context.Background(), "contacts", ContactDraft{
+		FirstName: "Bob",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id == "" {
+		t.Error("expected client-generated id, got empty")
+	}
+}
+
+func TestAddItemViaSync_responseWithoutCollection(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		// Top-level Status only, no <Collection>.
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+			wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("1")),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "contacts", "K1")
+	id, err := c.CreateContact(context.Background(), "contacts", ContactDraft{FirstName: "X"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id == "" {
+		t.Error("expected client-generated id fallback")
+	}
+}
+
+func TestAddItemViaSync_skipsNonAddInResponses(t *testing.T) {
+	// Responses contains a Change entry alongside the Add — non-Add must
+	// be skipped without confusing the ServerId lookup.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := readCapped(r.Body, 1<<20)
+		req, _ := wbxml.Unmarshal(body, wbxml.DefaultRegistry())
+		clientID := ""
+		if cid := req.Root.Find("ClientId"); cid != nil {
+			clientID = cid.TextContent()
+		}
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+			wbxml.E(wbxml.PageAirSync, "Collections",
+				wbxml.E(wbxml.PageAirSync, "Collection",
+					wbxml.E(wbxml.PageAirSync, "SyncKey", wbxml.Text("K2")),
+					wbxml.E(wbxml.PageAirSync, "CollectionId", wbxml.Text("contacts")),
+					wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("1")),
+					wbxml.E(wbxml.PageAirSync, "Responses",
+						wbxml.E(wbxml.PageAirSync, "Change",
+							wbxml.E(wbxml.PageAirSync, "ServerId", wbxml.Text("ignored")),
+						),
+						wbxml.E(wbxml.PageAirSync, "Add",
+							wbxml.E(wbxml.PageAirSync, "ClientId", wbxml.Text(clientID)),
+							wbxml.E(wbxml.PageAirSync, "ServerId", wbxml.Text("real:1")),
+							wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("1")),
+						),
+					),
+				),
+			),
+		)}
+		respBody, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(respBody)
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "contacts", "K1")
+	id, err := c.CreateContact(context.Background(), "contacts", ContactDraft{FirstName: "X"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "real:1" {
+		t.Errorf("id = %q, want real:1", id)
+	}
+}
+
+func TestSendSyncCommandsWithReset_ensureSyncedFails(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be reached when state read fails")
+	})
+	c.cfg.State = &errStateStore{inner: NewMemoryState(), syncKeyErr: errSentinel("boom")}
+	if _, err := c.CreateContact(context.Background(), "contacts", ContactDraft{FirstName: "X"}); err == nil {
+		t.Error("want error from ensureSynced")
+	}
+}
+
 // The shared sync helpers (addItemViaSync, changeItemViaSync,
 // deleteItemViaSync) live in contacts.go because that's the original
 // home of the per-item Sync wrapper logic. Their argument-validation

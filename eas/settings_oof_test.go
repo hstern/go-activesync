@@ -279,6 +279,253 @@ func TestGetUserInformation_accountsList(t *testing.T) {
 	}
 }
 
+func TestGetOof_postErrorPropagates(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	})
+	if _, err := c.GetOof(context.Background()); err == nil {
+		t.Error("want HTTP error")
+	}
+}
+
+func TestGetOof_emptyResponseRejected(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200) // empty body
+	})
+	if _, err := c.GetOof(context.Background()); err == nil {
+		t.Error("want error on empty response")
+	}
+}
+
+func TestGetOof_topLevelStatusError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageSettings, "Settings",
+			wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("3")),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	if _, err := c.GetOof(context.Background()); !IsStatusCode(err, 3) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestGetOof_missingOofRejected(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageSettings, "Settings",
+			wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_, err := c.GetOof(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "<Oof>") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestGetOof_valuesUnderOofWithoutGetWrapper(t *testing.T) {
+	// Some servers return values directly under Oof without a Get wrapper.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageSettings, "Settings",
+			wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+			wbxml.E(wbxml.PageSettings, "Oof",
+				wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+				wbxml.E(wbxml.PageSettings, "OofState", wbxml.Text("1")),
+			),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	cfg, err := c.GetOof(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.State != OofGlobal {
+		t.Errorf("state = %v", cfg.State)
+	}
+}
+
+func TestGetOof_unparseableEndTimeIsError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageSettings, "Settings",
+			wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+			wbxml.E(wbxml.PageSettings, "Oof",
+				wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+				wbxml.E(wbxml.PageSettings, "Get",
+					wbxml.E(wbxml.PageSettings, "OofState", wbxml.Text("2")),
+					wbxml.E(wbxml.PageSettings, "StartTime", wbxml.Text("2026-05-12T09:00:00Z")),
+					wbxml.E(wbxml.PageSettings, "EndTime", wbxml.Text("garbage")),
+				),
+			),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_, err := c.GetOof(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "EndTime") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestGetOof_externalRepliesAndHTML(t *testing.T) {
+	// Cover AppliesToExternalKnown / AppliesToExternalUnknown branches and
+	// the BodyType=HTML case.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageSettings, "Settings",
+			wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+			wbxml.E(wbxml.PageSettings, "Oof",
+				wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+				wbxml.E(wbxml.PageSettings, "Get",
+					wbxml.E(wbxml.PageSettings, "OofState", wbxml.Text("1")),
+					wbxml.E(wbxml.PageSettings, "OofMessage",
+						wbxml.E(wbxml.PageSettings, "AppliesToExternalKnown"),
+						wbxml.E(wbxml.PageSettings, "Enabled", wbxml.Text("1")),
+						wbxml.E(wbxml.PageSettings, "ReplyMessage", wbxml.Text("ext known")),
+						wbxml.E(wbxml.PageSettings, "BodyType", wbxml.Text("HTML")),
+					),
+					wbxml.E(wbxml.PageSettings, "OofMessage",
+						wbxml.E(wbxml.PageSettings, "AppliesToExternalUnknown"),
+						wbxml.E(wbxml.PageSettings, "Enabled", wbxml.Text("1")),
+						wbxml.E(wbxml.PageSettings, "ReplyMessage", wbxml.Text("ext unknown")),
+						wbxml.E(wbxml.PageSettings, "BodyType", wbxml.Text("Text")),
+					),
+				),
+			),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	cfg, err := c.GetOof(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ExternalKnownReply.ReplyMessage != "ext known" || cfg.ExternalKnownReply.BodyType != BodyTypeHTML {
+		t.Errorf("external known = %+v", cfg.ExternalKnownReply)
+	}
+	if cfg.ExternalUnknownReply.ReplyMessage != "ext unknown" {
+		t.Errorf("external unknown = %+v", cfg.ExternalUnknownReply)
+	}
+}
+
+func TestSetOof_skipsEmptyDisabledMessages(t *testing.T) {
+	// A message with Enabled=false and empty ReplyMessage is dropped.
+	c, cap, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200)
+	})
+	_ = c.SetOof(context.Background(), OofConfig{
+		State:                OofDisabled,
+		InternalReply:        OofMessage{}, // skipped
+		ExternalKnownReply:   OofMessage{Enabled: true, ReplyMessage: "ext"},
+		ExternalUnknownReply: OofMessage{}, // skipped
+	})
+	req, _ := wbxml.Unmarshal(cap.body, wbxml.DefaultRegistry())
+	if msgs := req.Root.FindAll("OofMessage"); len(msgs) != 1 {
+		t.Errorf("OofMessage count = %d, want 1 (the Enabled one)", len(msgs))
+	}
+}
+
+func TestSetOof_postErrorPropagates(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	})
+	if err := c.SetOof(context.Background(), OofConfig{State: OofDisabled}); err == nil {
+		t.Error("want HTTP error")
+	}
+}
+
+func TestSetOof_emptyResponseIsSuccess(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200) // empty body → success
+	})
+	if err := c.SetOof(context.Background(), OofConfig{State: OofDisabled}); err != nil {
+		t.Errorf("want nil err, got %v", err)
+	}
+}
+
+func TestSetOof_topLevelStatusError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageSettings, "Settings",
+			wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("3")),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	if err := c.SetOof(context.Background(), OofConfig{State: OofDisabled}); !IsStatusCode(err, 3) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestSetDevicePassword_postErrorPropagates(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	})
+	if err := c.SetDevicePassword(context.Background(), "x"); err == nil {
+		t.Error("want HTTP error")
+	}
+}
+
+func TestSetDevicePassword_emptyResponseIsSuccess(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200) // empty body → success
+	})
+	if err := c.SetDevicePassword(context.Background(), "x"); err != nil {
+		t.Errorf("want nil err, got %v", err)
+	}
+}
+
+func TestGetUserInformation_postErrorPropagates(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	})
+	if _, err := c.GetUserInformation(context.Background()); err == nil {
+		t.Error("want HTTP error")
+	}
+}
+
+func TestGetUserInformation_emptyResponseRejected(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200) // empty body
+	})
+	if _, err := c.GetUserInformation(context.Background()); err == nil {
+		t.Error("want error on empty response")
+	}
+}
+
+func TestGetUserInformation_skipsNonAccountChildren(t *testing.T) {
+	// Stray child inside <Accounts> that isn't an <Account> must be skipped.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageSettings, "Settings",
+			wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+			wbxml.E(wbxml.PageSettings, "UserInformation",
+				wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+				wbxml.E(wbxml.PageSettings, "Accounts",
+					wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")), // not an Account
+					wbxml.E(wbxml.PageSettings, "Account",
+						wbxml.E(wbxml.PageSettings, "AccountId", wbxml.Text("a")),
+					),
+				),
+			),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	info, err := c.GetUserInformation(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(info.Accounts) != 1 {
+		t.Errorf("Accounts = %d, want 1", len(info.Accounts))
+	}
+}
+
 func TestGetUserInformation_topLevelStatusError(t *testing.T) {
 	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		doc := &wbxml.Document{
