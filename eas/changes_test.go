@@ -183,6 +183,108 @@ func TestApplyEmailChanges_perItemStatus(t *testing.T) {
 	}
 }
 
+// TestApplyEmailChanges_invalidKeyResetsAndRetries: server responds with
+// Status=3 once, the client must reset the per-folder key, re-bootstrap,
+// and replay the change command transparently.
+func TestApplyEmailChanges_invalidKeyResetsAndRetries(t *testing.T) {
+	var (
+		mu    sync.Mutex
+		calls int
+	)
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		calls++
+		this := calls
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		switch this {
+		case 1: // first applyChangesOnce → Status=3
+			doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+				wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("3")),
+			)}
+			body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+			w.Write(body)
+		default: // bootstrap re-Sync after reset, then replay succeeds
+			w.Write(changeAck("RESET-" + itoa(this)))
+		}
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "inbox", "STALE")
+	read := true
+	if _, err := c.ApplyEmailChanges(context.Background(), "inbox",
+		[]EmailChange{{ServerID: "m-1", Read: &read}}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != 3 {
+		t.Errorf("calls = %d, want 3 (status3 → bootstrap → replay)", got)
+	}
+}
+
+// TestApplyEmailChanges_allEmptyIsError: a change with no fields set and
+// no Delete is silently skipped. With only such changes, the call must
+// error rather than emit a no-op Sync.
+func TestApplyEmailChanges_allEmptyIsError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		// Only the bootstrap may hit; the change-emit path must short-circuit.
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(changeAck("BOOT"))
+	})
+	// Skip bootstrap by pre-populating a key.
+	_ = c.cfg.State.SetSyncKey(context.Background(), "inbox", "K1")
+	if _, err := c.ApplyEmailChanges(context.Background(), "inbox", []EmailChange{
+		{ServerID: "m-1"}, // no Read/Flag/Delete set
+	}); err == nil {
+		t.Error("want 'no effective changes' error")
+	}
+}
+
+// TestApplyEmailChanges_unflaggedSendsFlagStatusZero: passing
+// Flagged=&false must emit FlagStatus=0 (the explicit "clear flag"
+// instruction).
+func TestApplyEmailChanges_unflaggedSendsFlagStatusZero(t *testing.T) {
+	var lastBody []byte
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := readCapped(r.Body, 1<<20)
+		lastBody = body
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(changeAck("DONE"))
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "inbox", "K1")
+	flagged := false
+	if _, err := c.ApplyEmailChanges(context.Background(), "inbox",
+		[]EmailChange{{ServerID: "m-1", Flagged: &flagged}}); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := wbxml.Unmarshal(lastBody, wbxml.DefaultRegistry())
+	if fs := req.Root.Find("FlagStatus"); fs == nil || fs.TextContent() != "0" {
+		t.Errorf("FlagStatus = %v, want 0", fs)
+	}
+}
+
+// TestApplyEmailChanges_explicitFlagStatus: SetFlagStatus takes
+// precedence and is sent verbatim regardless of Flagged.
+func TestApplyEmailChanges_explicitFlagStatus(t *testing.T) {
+	var lastBody []byte
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := readCapped(r.Body, 1<<20)
+		lastBody = body
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(changeAck("DONE"))
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "inbox", "K1")
+	complete := 1 // 1 = complete
+	if _, err := c.ApplyEmailChanges(context.Background(), "inbox",
+		[]EmailChange{{ServerID: "m-1", SetFlagStatus: &complete}}); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := wbxml.Unmarshal(lastBody, wbxml.DefaultRegistry())
+	if fs := req.Root.Find("FlagStatus"); fs == nil || fs.TextContent() != "1" {
+		t.Errorf("FlagStatus = %v, want 1", fs)
+	}
+}
+
 func TestApplyEmailChanges_validation(t *testing.T) {
 	c, _, _ := newTestClient(t, nil)
 	if _, err := c.ApplyEmailChanges(context.Background(), "", []EmailChange{{ServerID: "x"}}); err == nil {

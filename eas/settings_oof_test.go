@@ -222,3 +222,75 @@ func TestGetUserInformation_basic(t *testing.T) {
 		t.Errorf("primary email = %q", info.PrimaryEmail)
 	}
 }
+
+// TestGetUserInformation_accountsList covers the Accounts/Account loop
+// that the basic test skips. Real Office 365 mailboxes return one
+// Account per delegated mailbox; the parser must round-trip every
+// scalar field.
+func TestGetUserInformation_accountsList(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageSettings, "Settings",
+				wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+				wbxml.E(wbxml.PageSettings, "UserInformation",
+					wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+					wbxml.E(wbxml.PageSettings, "EmailAddresses",
+						wbxml.E(wbxml.PageSettings, "SmtpAddress", wbxml.Text("primary@x")),
+					),
+					wbxml.E(wbxml.PageSettings, "Accounts",
+						wbxml.E(wbxml.PageSettings, "Account",
+							wbxml.E(wbxml.PageSettings, "AccountId", wbxml.Text("acct-1")),
+							wbxml.E(wbxml.PageSettings, "AccountName", wbxml.Text("Personal")),
+							wbxml.E(wbxml.PageSettings, "UserDisplayName", wbxml.Text("Henry")),
+							wbxml.E(wbxml.PageSettings, "EmailAddresses",
+								wbxml.E(wbxml.PageSettings, "PrimarySmtpAddress", wbxml.Text("h@personal")),
+							),
+							wbxml.E(wbxml.PageSettings, "SendDisabled", wbxml.Text("0")),
+						),
+						wbxml.E(wbxml.PageSettings, "Account",
+							wbxml.E(wbxml.PageSettings, "AccountId", wbxml.Text("acct-2")),
+							wbxml.E(wbxml.PageSettings, "SendDisabled", wbxml.Text("1")),
+						),
+					),
+				),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	info, err := c.GetUserInformation(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.PrimaryEmail != "primary@x" {
+		t.Errorf("PrimaryEmail = %q", info.PrimaryEmail)
+	}
+	if len(info.Accounts) != 2 {
+		t.Fatalf("got %d accounts", len(info.Accounts))
+	}
+	a := info.Accounts[0]
+	if a.AccountID != "acct-1" || a.AccountName != "Personal" ||
+		a.UserDisplayName != "Henry" || a.PrimarySMTP != "h@personal" || a.SendDisabled {
+		t.Errorf("account 0 = %+v", a)
+	}
+	if !info.Accounts[1].SendDisabled {
+		t.Errorf("account 1 SendDisabled = %v", info.Accounts[1].SendDisabled)
+	}
+}
+
+func TestGetUserInformation_topLevelStatusError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageSettings, "Settings",
+				wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("3")),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	if _, err := c.GetUserInformation(context.Background()); err == nil {
+		t.Error("want error for non-OK status")
+	}
+}

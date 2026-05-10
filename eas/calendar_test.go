@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -58,6 +59,47 @@ func eventAdd(serverID, subject string, start, end time.Time) *wbxml.Element {
 			),
 		),
 	)
+}
+
+func TestSyncCalendar_emptyFolderRejected(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be hit")
+	})
+	if _, err := c.SyncCalendar(context.Background(), "", CalendarSyncOptions{}); err == nil {
+		t.Error("want error for empty folderID")
+	}
+}
+
+// TestSyncCalendar_invalidKeyRetries: server returns Status=3 once, the
+// client must reset the per-folder key to "0" and re-issue the same
+// command transparently.
+func TestSyncCalendar_invalidKeyRetries(t *testing.T) {
+	var calls int32
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		if n == 1 {
+			doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+				wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("3")),
+			)}
+			body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+			w.Write(body)
+			return
+		}
+		w.Write(calendarSyncResponse("KEY-2"))
+	})
+	// Pre-populate a stale key so the first call sends it.
+	_ = c.cfg.State.SetSyncKey(context.Background(), "cal", "STALE")
+	res, err := c.SyncCalendar(context.Background(), "cal", CalendarSyncOptions{NoBootstrap: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.SyncKey != "KEY-2" {
+		t.Errorf("SyncKey = %q, want KEY-2", res.SyncKey)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Errorf("calls = %d, want 2 (status 3 → reset → retry)", got)
+	}
 }
 
 func TestSyncCalendar_parsesEvent(t *testing.T) {
@@ -168,6 +210,57 @@ func TestUpdateEvent_andDeleteEvent(t *testing.T) {
 	}
 	if err := c.DeleteEvent(context.Background(), "cal", "ev1"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRespondInvite_validation(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be hit")
+	})
+	if _, err := c.RespondInvite(context.Background(), "", "id", MeetingAccept); err == nil {
+		t.Error("want error for empty folderID")
+	}
+	if _, err := c.RespondInvite(context.Background(), "f", "", MeetingAccept); err == nil {
+		t.Error("want error for empty serverID")
+	}
+}
+
+func TestRespondInvite_topLevelStatusOnly(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		// No <Result> — some servers only emit a top-level Status.
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageMeetingResponse, "MeetingResponse",
+				wbxml.E(wbxml.PageMeetingResponse, "Status", wbxml.Text("1")),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	res, err := c.RespondInvite(context.Background(), "inbox", "i-1", MeetingAccept)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != StatusOK {
+		t.Errorf("Status = %d", res.Status)
+	}
+}
+
+func TestRespondInvite_perResultStatusError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageMeetingResponse, "MeetingResponse",
+				wbxml.E(wbxml.PageMeetingResponse, "Result",
+					wbxml.E(wbxml.PageMeetingResponse, "Status", wbxml.Text("3")),
+				),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	if _, err := c.RespondInvite(context.Background(), "inbox", "i-1", MeetingDecline); err == nil {
+		t.Error("want error for non-OK Result/Status")
 	}
 }
 

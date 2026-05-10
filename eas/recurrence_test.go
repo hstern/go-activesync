@@ -6,6 +6,8 @@ package eas
 import (
 	"testing"
 	"time"
+
+	"github.com/hstern/go-activesync/wbxml"
 )
 
 func TestRecurrence_roundTrip(t *testing.T) {
@@ -122,6 +124,68 @@ func TestTimeZone_explicitBlobRoundTrip(t *testing.T) {
 	}
 	if out.StandardDate != in.StandardDate || out.DaylightDate != in.DaylightDate {
 		t.Errorf("system time round-trip mismatch")
+	}
+}
+
+// TestRecurrenceFromWBXML_allFields walks every branch of
+// recurrenceFromWBXML so calendar-type and locale-specific fields
+// (MonthOfYear, FirstDayOfWeek, IsLeapMonth) don't silently regress.
+func TestRecurrenceFromWBXML_allFields(t *testing.T) {
+	if got := recurrenceFromWBXML(nil); got != nil {
+		t.Errorf("nil input: %v", got)
+	}
+	in := wbxml.E(wbxml.PageCalendar, "Recurrence",
+		wbxml.E(wbxml.PageCalendar, "Recurrence_Type", wbxml.Text("1")),
+		wbxml.E(wbxml.PageCalendar, "Recurrence_Interval", wbxml.Text("2")),
+		wbxml.E(wbxml.PageCalendar, "Recurrence_Occurrences", wbxml.Text("10")),
+		wbxml.E(wbxml.PageCalendar, "Recurrence_Until", wbxml.Text("2026-12-31T00:00:00Z")),
+		wbxml.E(wbxml.PageCalendar, "Recurrence_DayOfWeek", wbxml.Text("4")),
+		wbxml.E(wbxml.PageCalendar, "Recurrence_DayOfMonth", wbxml.Text("15")),
+		wbxml.E(wbxml.PageCalendar, "Recurrence_WeekOfMonth", wbxml.Text("3")),
+		wbxml.E(wbxml.PageCalendar, "Recurrence_MonthOfYear", wbxml.Text("6")),
+		wbxml.E(wbxml.PageCalendar, "CalendarType", wbxml.Text("1")),
+		wbxml.E(wbxml.PageCalendar, "FirstDayOfWeek", wbxml.Text("1")),
+		wbxml.E(wbxml.PageCalendar, "IsLeapMonth", wbxml.Text("1")),
+	)
+	got := recurrenceFromWBXML(in)
+	if got == nil {
+		t.Fatal("nil result")
+	}
+	if got.Type != RecurrenceWeekly || got.Interval != 2 || got.Occurrences != 10 ||
+		got.DayOfWeek != 4 || got.DayOfMonth != 15 || got.WeekOfMonth != 3 ||
+		got.MonthOfYear != 6 || got.CalendarType != 1 || got.FirstDayOfWeek != 1 ||
+		!got.IsLeapMonth {
+		t.Errorf("recurrence = %+v", got)
+	}
+	if got.Until.IsZero() {
+		t.Error("Until not parsed")
+	}
+}
+
+// TestParseException_allFields covers the Exception field branches that
+// the existing roundtrip tests touch only via encode-decode symmetry.
+func TestParseException_allFields(t *testing.T) {
+	e := wbxml.E(wbxml.PageCalendar, "Exception",
+		wbxml.E(wbxml.PageCalendar, "ExceptionStartTime", wbxml.Text("2026-05-12T14:00:00Z")),
+		wbxml.E(wbxml.PageCalendar, "Subject", wbxml.Text("S")),
+		wbxml.E(wbxml.PageCalendar, "Location", wbxml.Text("L")),
+		wbxml.E(wbxml.PageCalendar, "StartTime", wbxml.Text("2026-05-12T15:00:00Z")),
+		wbxml.E(wbxml.PageCalendar, "EndTime", wbxml.Text("2026-05-12T16:00:00Z")),
+		wbxml.E(wbxml.PageCalendar, "AllDayEvent", wbxml.Text("1")),
+		wbxml.E(wbxml.PageCalendar, "BusyStatus", wbxml.Text("2")),
+		wbxml.E(wbxml.PageCalendar, "Reminder", wbxml.Text("15")),
+		wbxml.E(wbxml.PageAirSyncBase, "Body",
+			wbxml.E(wbxml.PageAirSyncBase, "Type", wbxml.Text("1")),
+			wbxml.E(wbxml.PageAirSyncBase, "Data", wbxml.Text("body text")),
+		),
+	)
+	got := parseException(e)
+	if got.Subject != "S" || got.Location != "L" || !got.AllDayEvent ||
+		got.BusyStatus != 2 || got.Reminder != 15 || got.Body != "body text" {
+		t.Errorf("got %+v", got)
+	}
+	if got.ExceptionStartTime.IsZero() || got.StartTime.IsZero() || got.EndTime.IsZero() {
+		t.Errorf("dates = %+v", got)
 	}
 }
 

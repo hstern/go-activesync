@@ -206,6 +206,78 @@ func TestAutodiscover_followsHTTPRedirect(t *testing.T) {
 	}
 }
 
+// rerouteTransport intercepts every request and replays it against
+// `target`, so a test can drive autodiscoverFollowRedirect (which
+// hard-codes http://autodiscover.<domain>/...) against a controlled
+// httptest server without touching real DNS.
+type rerouteTransport struct {
+	target string
+	t      http.RoundTripper
+}
+
+func (r rerouteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	u, err := url.Parse(r.target)
+	if err != nil {
+		return nil, err
+	}
+	clone := req.Clone(req.Context())
+	clone.URL.Scheme = u.Scheme
+	clone.URL.Host = u.Host
+	clone.Host = u.Host
+	return r.t.RoundTrip(clone)
+}
+
+func TestAutodiscoverFollowRedirect_returnsLocation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", "https://mail.example.com/Autodiscover/Autodiscover.xml")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer srv.Close()
+	hc := &http.Client{Transport: rerouteTransport{target: srv.URL, t: srv.Client().Transport}}
+	loc, err := autodiscoverFollowRedirect(t.Context(), hc, "test", "example.com", slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loc != "https://mail.example.com/Autodiscover/Autodiscover.xml" {
+		t.Errorf("loc = %q", loc)
+	}
+}
+
+func TestAutodiscoverFollowRedirect_rejectsHTTPDowngrade(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Spec says clients must refuse a downgrade to plain HTTP.
+		w.Header().Set("Location", "http://mail.example.com/path")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer srv.Close()
+	hc := &http.Client{Transport: rerouteTransport{target: srv.URL, t: srv.Client().Transport}}
+	if _, err := autodiscoverFollowRedirect(t.Context(), hc, "test", "example.com", slog.Default()); err == nil {
+		t.Error("want error for HTTP downgrade")
+	}
+}
+
+func TestAutodiscoverFollowRedirect_missingLocation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusFound) // no Location header
+	}))
+	defer srv.Close()
+	hc := &http.Client{Transport: rerouteTransport{target: srv.URL, t: srv.Client().Transport}}
+	if _, err := autodiscoverFollowRedirect(t.Context(), hc, "test", "example.com", slog.Default()); err == nil {
+		t.Error("want error for missing Location header")
+	}
+}
+
+func TestAutodiscoverFollowRedirect_nonRedirectStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK) // not a redirect
+	}))
+	defer srv.Close()
+	hc := &http.Client{Transport: rerouteTransport{target: srv.URL, t: srv.Client().Transport}}
+	if _, err := autodiscoverFollowRedirect(t.Context(), hc, "test", "example.com", slog.Default()); err == nil {
+		t.Error("want error for non-redirect status")
+	}
+}
+
 func TestAutodiscover_srvLookupHappyPath(t *testing.T) {
 	xmlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/xml")

@@ -74,6 +74,66 @@ func TestRetryOn401_refreshesAuth(t *testing.T) {
 	}
 }
 
+// TestRetryOn449_reprovisionsAndRetries exercises the MS-ASPROV §3.1.5.2
+// recovery path: when a non-Provision command receives HTTP 449, the
+// client must transparently re-Provision and retry the original command
+// once. Without this, every PolicyKey expiry would surface to the
+// caller as a hard failure.
+func TestRetryOn449_reprovisionsAndRetries(t *testing.T) {
+	var calls int32
+	// The transcript on the wire is:
+	//   call 1: original FolderSync → 449
+	//   call 2: Provision (phase 1) → temp policy + key
+	//   call 3: Provision (phase 2 ack) → final policy key
+	//   call 4: original FolderSync retried → 200
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		switch n {
+		case 1:
+			w.WriteHeader(449)
+		case 2:
+			doc := &wbxml.Document{Root: wbxml.E(wbxml.PageProvision, "Provision",
+				wbxml.E(wbxml.PageProvision, "Status", wbxml.Text("1")),
+				wbxml.E(wbxml.PageProvision, "Policies",
+					wbxml.E(wbxml.PageProvision, "Policy",
+						wbxml.E(wbxml.PageProvision, "PolicyType", wbxml.Text("MS-EAS-Provisioning-WBXML")),
+						wbxml.E(wbxml.PageProvision, "Status", wbxml.Text("1")),
+						wbxml.E(wbxml.PageProvision, "PolicyKey", wbxml.Text("temp")),
+						wbxml.E(wbxml.PageProvision, "Data",
+							wbxml.E(wbxml.PageProvision, "EASProvisionDoc"),
+						),
+					),
+				),
+			)}
+			body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+			w.Write(body)
+		case 3:
+			doc := &wbxml.Document{Root: wbxml.E(wbxml.PageProvision, "Provision",
+				wbxml.E(wbxml.PageProvision, "Status", wbxml.Text("1")),
+				wbxml.E(wbxml.PageProvision, "Policies",
+					wbxml.E(wbxml.PageProvision, "Policy",
+						wbxml.E(wbxml.PageProvision, "PolicyType", wbxml.Text("MS-EAS-Provisioning-WBXML")),
+						wbxml.E(wbxml.PageProvision, "Status", wbxml.Text("1")),
+						wbxml.E(wbxml.PageProvision, "PolicyKey", wbxml.Text("FINAL")),
+					),
+				),
+			)}
+			body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+			w.Write(body)
+		default:
+			w.WriteHeader(200)
+		}
+	})
+	doc := &wbxml.Document{Root: wbxml.E(wbxml.PageFolderHierarchy, "FolderSync")}
+	if _, err := c.post(context.Background(), "FolderSync", doc); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 4 {
+		t.Errorf("calls = %d, want 4 (449 → 2× Provision → retry)", got)
+	}
+}
+
 func TestRetryOn401_disabledByDefault(t *testing.T) {
 	var calls int32
 	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {

@@ -13,6 +13,15 @@ import (
 	"github.com/hstern/go-activesync/wbxml"
 )
 
+func TestSyncContacts_emptyFolderRejected(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be hit")
+	})
+	if _, err := c.SyncContacts(context.Background(), ""); err == nil {
+		t.Error("want error for empty folderID")
+	}
+}
+
 func TestSyncContacts_parsesItem(t *testing.T) {
 	add := wbxml.E(wbxml.PageAirSync, "Add",
 		wbxml.E(wbxml.PageAirSync, "ServerId", wbxml.Text("c-1")),

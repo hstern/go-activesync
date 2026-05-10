@@ -179,3 +179,93 @@ func TestParseEmailItem_nilApp(t *testing.T) {
 		t.Errorf("Subject populated from nil app: %q", got.Subject)
 	}
 }
+
+// TestParseEmailItem_allEmailFields walks every leaf field on the
+// Email and Email2 codepages so the per-name switch arms are covered.
+// The existing minimal/body/flag tests cover happy paths but skip
+// many of the small fields (Cc, ReplyTo, DisplayTo, ThreadTopic,
+// MessageClass, Categories, Bcc, Sender) which can silently regress.
+func TestParseEmailItem_allEmailFields(t *testing.T) {
+	app := wbxml.E(wbxml.PageAirSync, "ApplicationData",
+		wbxml.E(wbxml.PageEmail, "Subject", wbxml.Text("S")),
+		wbxml.E(wbxml.PageEmail, "From", wbxml.Text("alice@x")),
+		wbxml.E(wbxml.PageEmail, "To", wbxml.Text("bob@x")),
+		wbxml.E(wbxml.PageEmail, "Cc", wbxml.Text("carol@x")),
+		wbxml.E(wbxml.PageEmail, "ReplyTo", wbxml.Text("alice@reply")),
+		wbxml.E(wbxml.PageEmail, "DisplayTo", wbxml.Text("Bob")),
+		wbxml.E(wbxml.PageEmail, "DateReceived", wbxml.Text("2026-05-10T12:00:00.000Z")),
+		wbxml.E(wbxml.PageEmail, "Read", wbxml.Text("1")),
+		wbxml.E(wbxml.PageEmail, "Importance", wbxml.Text("2")),
+		wbxml.E(wbxml.PageEmail, "ThreadTopic", wbxml.Text("Thread")),
+		wbxml.E(wbxml.PageEmail, "MessageClass", wbxml.Text("IPM.Note")),
+		wbxml.E(wbxml.PageEmail, "Flag",
+			wbxml.E(wbxml.PageEmail, "FlagStatus", wbxml.Text("2")),
+		),
+		wbxml.E(wbxml.PageEmail, "Categories",
+			wbxml.E(wbxml.PageEmail, "Category", wbxml.Text("work")),
+			wbxml.E(wbxml.PageEmail, "Category", wbxml.Text("urgent")),
+		),
+		wbxml.E(wbxml.PageEmail2, "Bcc", wbxml.Text("hidden@x")),
+		wbxml.E(wbxml.PageEmail2, "Sender", wbxml.Text("smtp-sender@x")),
+		wbxml.E(wbxml.PageEmail2, "LastVerbExecuted", wbxml.Text("1")), // intentionally not parsed
+		wbxml.E(wbxml.PageAirSyncBase, "Preview", wbxml.Text("preview text")),
+		wbxml.E(wbxml.PageAirSyncBase, "Attachments",
+			wbxml.E(wbxml.PageAirSyncBase, "Attachment"),
+		),
+		wbxml.E(wbxml.PageAirSyncBase, "NativeBodyType", wbxml.Text("1")),
+	)
+	got := parseEmailItem("e-1", app)
+	if got.Subject != "S" || got.From != "alice@x" || got.To != "bob@x" ||
+		got.Cc != "carol@x" || got.ReplyTo != "alice@reply" || got.DisplayTo != "Bob" {
+		t.Errorf("address fields = %+v", got)
+	}
+	if !got.Read || got.Importance != 2 || got.ThreadTopic != "Thread" ||
+		got.MessageClass != "IPM.Note" || got.FlagStatus != 2 || !got.Flagged() {
+		t.Errorf("scalar fields = %+v", got)
+	}
+	if got.DateReceived.IsZero() {
+		t.Error("DateReceived not parsed")
+	}
+	if len(got.Categories) != 2 || got.Categories[0] != "work" {
+		t.Errorf("Categories = %v", got.Categories)
+	}
+	if got.Bcc != "hidden@x" || got.Sender != "smtp-sender@x" {
+		t.Errorf("email2 fields: %+v", got)
+	}
+	if !got.HasAttachments {
+		t.Error("HasAttachments not set")
+	}
+	if got.BodyPreview != "preview text" {
+		t.Errorf("BodyPreview = %q", got.BodyPreview)
+	}
+}
+
+// Top-level Preview is only used when no Body subtree provided one.
+func TestParseEmailItem_bodyPreviewWinsOverTopLevelPreview(t *testing.T) {
+	app := wbxml.E(wbxml.PageAirSync, "ApplicationData",
+		wbxml.E(wbxml.PageAirSyncBase, "Preview", wbxml.Text("top-level")),
+		wbxml.E(wbxml.PageAirSyncBase, "Body",
+			wbxml.E(wbxml.PageAirSyncBase, "Type", wbxml.Text("1")),
+			wbxml.E(wbxml.PageAirSyncBase, "Preview", wbxml.Text("body-preview")),
+		),
+	)
+	got := parseEmailItem("e", app)
+	if got.BodyPreview != "body-preview" {
+		t.Errorf("BodyPreview = %q, want body-preview", got.BodyPreview)
+	}
+}
+
+func TestParseEmailItem_truncatedBody(t *testing.T) {
+	app := wbxml.E(wbxml.PageAirSync, "ApplicationData",
+		wbxml.E(wbxml.PageAirSyncBase, "Body",
+			wbxml.E(wbxml.PageAirSyncBase, "Type", wbxml.Text("1")),
+			wbxml.E(wbxml.PageAirSyncBase, "EstimatedDataSize", wbxml.Text("4096")),
+			wbxml.E(wbxml.PageAirSyncBase, "Truncated", wbxml.Text("1")),
+			wbxml.E(wbxml.PageAirSyncBase, "Data", wbxml.Text("first 100 bytes...")),
+		),
+	)
+	got := parseEmailItem("e", app)
+	if !got.BodyTruncated || got.BodyEstimatedSize != 4096 {
+		t.Errorf("body meta = %+v", got)
+	}
+}
