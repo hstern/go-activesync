@@ -1,0 +1,116 @@
+// Copyright (C) 2026 Henry Stern
+// SPDX-License-Identifier: MIT
+
+package eas
+
+import (
+	"context"
+	"net/http"
+	"testing"
+	"time"
+
+	"github.com/hstern/go-activesync/wbxml"
+)
+
+func TestGetOof_parsesConfig(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageSettings, "Settings",
+				wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+				wbxml.E(wbxml.PageSettings, "Oof",
+					wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+					wbxml.E(wbxml.PageSettings, "Get",
+						wbxml.E(wbxml.PageSettings, "OofState", wbxml.Text("1")),
+						wbxml.E(wbxml.PageSettings, "OofMessage",
+							wbxml.E(wbxml.PageSettings, "AppliesToInternal"),
+							wbxml.E(wbxml.PageSettings, "Enabled", wbxml.Text("1")),
+							wbxml.E(wbxml.PageSettings, "ReplyMessage", wbxml.Text("Out today")),
+							wbxml.E(wbxml.PageSettings, "BodyType", wbxml.Text("Text")),
+						),
+					),
+				),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	cfg, err := c.GetOof(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.State != OofGlobal {
+		t.Errorf("state = %v", cfg.State)
+	}
+	if !cfg.InternalReply.Enabled || cfg.InternalReply.ReplyMessage != "Out today" {
+		t.Errorf("internal reply = %+v", cfg.InternalReply)
+	}
+}
+
+func TestSetOof_emitsTimeBased(t *testing.T) {
+	c, cap, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageSettings, "Settings",
+				wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+				wbxml.E(wbxml.PageSettings, "Oof",
+					wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+				),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	start := time.Date(2026, 5, 12, 9, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 5, 14, 17, 0, 0, 0, time.UTC)
+	err := c.SetOof(context.Background(), OofConfig{
+		State:     OofTimeBased,
+		StartTime: start,
+		EndTime:   end,
+		InternalReply: OofMessage{
+			Enabled:      true,
+			ReplyMessage: "On vacation",
+			BodyType:     BodyTypePlain,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := wbxml.Unmarshal(cap.body, wbxml.DefaultRegistry())
+	if st := req.Root.Find("OofState"); st == nil || st.TextContent() != "2" {
+		t.Errorf("OofState = %v", st)
+	}
+	if start := req.Root.Find("StartTime"); start == nil {
+		t.Error("StartTime missing")
+	}
+	if msg := req.Root.Find("ReplyMessage"); msg == nil || msg.TextContent() != "On vacation" {
+		t.Errorf("ReplyMessage = %v", msg)
+	}
+}
+
+func TestGetUserInformation_basic(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageSettings, "Settings",
+				wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+				wbxml.E(wbxml.PageSettings, "UserInformation",
+					wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+					wbxml.E(wbxml.PageSettings, "EmailAddresses",
+						wbxml.E(wbxml.PageSettings, "PrimarySmtpAddress", wbxml.Text("henry@example.com")),
+						wbxml.E(wbxml.PageSettings, "SmtpAddress", wbxml.Text("henry@example.com")),
+					),
+				),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	info, err := c.GetUserInformation(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.PrimaryEmail != "henry@example.com" {
+		t.Errorf("primary email = %q", info.PrimaryEmail)
+	}
+}

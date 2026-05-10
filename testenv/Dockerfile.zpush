@@ -1,0 +1,74 @@
+# Copyright (C) 2026 Henry Stern
+# SPDX-License-Identifier: MIT
+
+# Single-container Z-Push test target for go-activesync integration tests.
+#
+# Bundles:
+#   - Z-Push 2.7 (latest stable from upstream Debian repo)
+#   - Apache 2 + PHP 8.2 (Z-Push runs as a PHP app)
+#   - Dovecot (IMAP backend that Z-Push talks to)
+#   - Postfix (local delivery so SendMail loopback works)
+#
+# Test user: integration / integration
+# Mail address: integration@asmcp.test
+FROM debian:12
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates wget gnupg \
+        apache2 libapache2-mod-php \
+        php-curl php-mbstring php-soap php-xml php-cli \
+        dovecot-imapd dovecot-lmtpd \
+        postfix \
+        supervisor \
+        procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# IMAP support for PHP (z-push backend dep).
+RUN apt-get update && apt-get install -y --no-install-recommends php-imap \
+    && rm -rf /var/lib/apt/lists/*
+
+# Z-Push 2.7.6 from the GitHub source mirror. Both historical apt repos
+# (repo.z-hub.io and download.kopano.io/community/z-push:/) are no
+# longer serving packages as of 2026; the github.com/Z-Hub/Z-Push
+# mirror remains the canonical source.
+ARG ZPUSH_VERSION=2.7.6
+RUN wget -qO /tmp/zpush.tgz \
+        "https://github.com/Z-Hub/Z-Push/archive/refs/tags/${ZPUSH_VERSION}.tar.gz" \
+    && mkdir -p /usr/share/z-push /etc/z-push \
+    && tar -xzf /tmp/zpush.tgz --strip-components=2 -C /usr/share/z-push \
+        "Z-Push-${ZPUSH_VERSION}/src" \
+    && rm /tmp/zpush.tgz \
+    && chown -R www-data:www-data /usr/share/z-push
+
+# Test user. The password is "integration"; safe because the container
+# is for local integration testing, never exposed to the network.
+RUN useradd -m -s /bin/bash integration \
+    && echo 'integration:integration' | chpasswd \
+    && mkdir -p /home/integration/Maildir/{cur,new,tmp} \
+    && chown -R integration:integration /home/integration/Maildir
+
+# Configuration files. We keep Z-Push's stock config.php and
+# backend/imap/config.php (they define dozens of constants index.php
+# expects) and patch only the values that need to change for our
+# integration target.
+COPY dovecot.conf /etc/dovecot/dovecot.conf
+COPY postfix-main.cf /etc/postfix/main.cf
+COPY apache-zpush.conf /etc/apache2/sites-available/zpush.conf
+COPY zpush-patch.sh /usr/local/bin/zpush-patch.sh
+COPY supervisord.conf /etc/supervisor/conf.d/zpush.conf
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh /usr/local/bin/zpush-patch.sh \
+    && /usr/local/bin/zpush-patch.sh \
+    && chown www-data:www-data /usr/share/z-push/config.php /usr/share/z-push/backend/imap/config.php
+
+# Apache wiring.
+RUN a2dissite 000-default \
+    && a2ensite zpush \
+    && a2enmod rewrite headers \
+    && mkdir -p /var/lib/z-push /var/log/z-push \
+    && chown -R www-data:www-data /var/lib/z-push /var/log/z-push
+
+EXPOSE 80
+ENTRYPOINT ["/entrypoint.sh"]

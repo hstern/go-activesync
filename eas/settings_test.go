@@ -1,0 +1,101 @@
+// Copyright (C) 2026 Henry Stern
+// SPDX-License-Identifier: MIT
+
+package eas
+
+import (
+	"context"
+	"net/http"
+	"testing"
+
+	"github.com/hstern/go-activesync/wbxml"
+)
+
+func TestSettingsDeviceInformation_request(t *testing.T) {
+	c, cap, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		// Empty Settings response with Status=1.
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageSettings, "Settings",
+				wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+				wbxml.E(wbxml.PageSettings, "DeviceInformation",
+					wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+				),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+
+	err := c.SettingsDeviceInformation(context.Background(), DeviceInformation{
+		Model:        "MCP",
+		FriendlyName: "activesync-mcp",
+		OS:           "darwin",
+		UserAgent:    "go-activesync/0.1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cap.url.Query().Get("Cmd") != "Settings" {
+		t.Errorf("Cmd: %q", cap.url.Query().Get("Cmd"))
+	}
+	req, _ := wbxml.Unmarshal(cap.body, wbxml.DefaultRegistry())
+	di := req.Root.Find("DeviceInformation")
+	if di == nil {
+		t.Fatal("DeviceInformation missing")
+	}
+	set := di.Find("Set")
+	if set == nil {
+		t.Fatal("Set missing")
+	}
+	if m := set.Find("Model"); m == nil || m.TextContent() != "MCP" {
+		t.Errorf("Model = %v", m)
+	}
+	if ua := set.Find("UserAgent"); ua == nil || ua.TextContent() != "go-activesync/0.1" {
+		t.Errorf("UserAgent = %v", ua)
+	}
+	if sms := set.Find("EnableOutboundSMS"); sms == nil || sms.TextContent() != "0" {
+		t.Errorf("EnableOutboundSMS default = %v", sms)
+	}
+}
+
+func TestSettingsDeviceInformation_topLevelStatusError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageSettings, "Settings",
+				wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("110")),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	err := c.SettingsDeviceInformation(context.Background(), DeviceInformation{Model: "x"})
+	if !IsStatusCode(err, 110) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestSettingsDeviceInformation_emptyResponseOK(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200) // empty 200 OK
+	})
+	if err := c.SettingsDeviceInformation(context.Background(), DeviceInformation{Model: "x"}); err != nil {
+		t.Errorf("empty 200 OK should be success, got %v", err)
+	}
+}
+
+func TestSettingsDeviceInformation_omitsEmptyFields(t *testing.T) {
+	c, cap, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200)
+	})
+	_ = c.SettingsDeviceInformation(context.Background(), DeviceInformation{Model: "M"})
+	req, _ := wbxml.Unmarshal(cap.body, wbxml.DefaultRegistry())
+	set := req.Root.Find("Set")
+	if set.Find("OS") != nil {
+		t.Error("OS should be omitted when empty")
+	}
+	if set.Find("PhoneNumber") != nil {
+		t.Error("PhoneNumber should be omitted when empty")
+	}
+}

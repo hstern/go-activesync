@@ -1,0 +1,36 @@
+# Copyright (C) 2026 Henry Stern
+# SPDX-License-Identifier: MIT
+
+# Single-container Z-Push test target. Build + run with:
+#   make up      # docker compose up --build -d
+#   make test    # run the Go integration suite against it
+#   make down    # docker compose down -v
+#
+# The container exposes Z-Push at http://localhost:8580/Microsoft-Server-ActiveSync
+# Test credentials are integration / integration.
+
+services:
+  zpush:
+    build:
+      context: .
+      dockerfile: Dockerfile.zpush
+    container_name: go-activesync-zpush
+    ports:
+      - "8580:80"
+    # Persistent volume so state survives between `make up` runs (helps
+    # debug Sync-key issues without rebuilding).
+    volumes:
+      - zpush-state:/var/lib/z-push
+      - zpush-logs:/var/log/z-push
+      - zpush-mail:/home/integration/Maildir
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/Microsoft-Server-ActiveSync"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+volumes:
+  zpush-state:
+  zpush-logs:
+  zpush-mail:

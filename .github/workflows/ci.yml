@@ -1,0 +1,149 @@
+# Copyright (C) 2026 Henry Stern
+# SPDX-License-Identifier: MIT
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+# Cancel in-flight runs of the same workflow on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ------------------------------------------------------------------------
+  # Static checks: gofmt, vet, go mod tidy delta, govulncheck.
+  # Fast (~30s), runs on every push.
+  # ------------------------------------------------------------------------
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          # Track the latest 1.26 patch automatically so security fixes
+          # land in CI without needing to bump go.mod every patch release.
+          go-version: '1.26'
+          check-latest: true
+          cache: true
+
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "::error::gofmt drift in:"
+            echo "$out"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go mod tidy is clean
+        run: |
+          go mod tidy
+          if ! git diff --exit-code -- go.mod go.sum; then
+            echo "::error::go.mod/go.sum out of sync; run 'go mod tidy'"
+            exit 1
+          fi
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  # ------------------------------------------------------------------------
+  # Unit tests with race detector + coverage. Always runs.
+  # ------------------------------------------------------------------------
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          # Track the latest 1.26 patch automatically so security fixes
+          # land in CI without needing to bump go.mod every patch release.
+          go-version: '1.26'
+          check-latest: true
+          cache: true
+
+      - name: build
+        run: go build ./...
+
+      - name: test (race + coverage)
+        run: go test -race -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: coverage summary
+        run: go tool cover -func=coverage.out | tail -5
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------------
+  # Integration tests against a live Z-Push container. Brings up the
+  # testenv/ Docker stack, runs `go test -tags integration`, tears down.
+  # Slow (~3 min) — runs on push to main and on pull_request, not on
+  # every branch push to keep iteration fast.
+  # ------------------------------------------------------------------------
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          # Track the latest 1.26 patch automatically so security fixes
+          # land in CI without needing to bump go.mod every patch release.
+          go-version: '1.26'
+          check-latest: true
+          cache: true
+
+      - name: build & start testenv
+        working-directory: testenv
+        run: |
+          docker compose up --build -d
+          for i in $(seq 1 90); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' go-activesync-zpush 2>/dev/null || echo missing)
+            echo "[$i] healthcheck=$status"
+            if [ "$status" = "healthy" ]; then break; fi
+            sleep 2
+          done
+          if [ "$status" != "healthy" ]; then
+            echo "::group::container logs"
+            docker compose logs
+            echo "::endgroup::"
+            exit 1
+          fi
+
+      - name: integration tests
+        env:
+          EAS_INTEGRATION_URL: http://localhost:8580/Microsoft-Server-ActiveSync
+          EAS_INTEGRATION_USER: integration
+          EAS_INTEGRATION_PASS: integration
+          EAS_INTEGRATION_DEVICE: integration00000000000000000000
+          EAS_INTEGRATION_VERSION: "14.0"
+        run: go test -tags integration -v -count=1 -timeout 5m ./eas
+
+      - name: container logs on failure
+        if: failure()
+        working-directory: testenv
+        run: docker compose logs
+
+      - name: tear down
+        if: always()
+        working-directory: testenv
+        run: docker compose down -v
