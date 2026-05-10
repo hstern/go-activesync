@@ -626,6 +626,50 @@ func TestSendSyncCommandsWithReset_ensureSyncedFails(t *testing.T) {
 	}
 }
 
+func TestSendSyncCommandsWithReset_resetKeyFails(t *testing.T) {
+	// Status=3 from the change reply → SetSyncKey reset fails.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		// The single reply path: Status=3 InvalidSyncKey.
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+			wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("3")),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	es := &errStateStore{inner: NewMemoryState()}
+	c.cfg.State = es
+	_ = es.inner.SetSyncKey(context.Background(), "contacts", "STALE")
+	es.setSyncKeyErr = errSentinel("ro state")
+	_, err := c.CreateContact(context.Background(), "contacts", ContactDraft{FirstName: "X"})
+	if err == nil || !strings.Contains(err.Error(), "reset sync key") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestSendSyncCommandsWithReset_reBootstrapFails(t *testing.T) {
+	// Status=3 → reset OK → re-bootstrap (ensureSynced) fails on the
+	// follow-up Sync HTTP call.
+	calls := 0
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls == 1 {
+			doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+				wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("3")),
+			)}
+			body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+			w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+			w.Write(body)
+			return
+		}
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "contacts", "STALE")
+	if _, err := c.CreateContact(context.Background(), "contacts", ContactDraft{FirstName: "X"}); err == nil {
+		t.Error("want re-bootstrap error")
+	}
+}
+
 // The shared sync helpers (addItemViaSync, changeItemViaSync,
 // deleteItemViaSync) live in contacts.go because that's the original
 // home of the per-item Sync wrapper logic. Their argument-validation

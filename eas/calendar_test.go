@@ -535,6 +535,27 @@ func TestBuildEventApp_richDraft(t *testing.T) {
 	}
 }
 
+func TestBuildEventApp_allDayAndExceptions(t *testing.T) {
+	start := time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+	app := buildEventApp(EventDraft{
+		Subject:     "Conference",
+		StartTime:   start,
+		EndTime:     end,
+		AllDayEvent: true,
+		Exceptions: []Exception{
+			{ExceptionStartTime: start.Add(48 * time.Hour), Deleted: true},
+		},
+	})
+	if ad := app.Find("AllDayEvent"); ad == nil || ad.TextContent() != "1" {
+		t.Errorf("AllDayEvent = %v", ad)
+	}
+	exc := app.Find("Exceptions")
+	if exc == nil || len(exc.Children) != 1 {
+		t.Fatalf("Exceptions = %v", exc)
+	}
+}
+
 func TestBuildEventApp_timeZoneRawWinsOverStruct(t *testing.T) {
 	start := time.Date(2026, 5, 12, 14, 0, 0, 0, time.UTC)
 	end := start.Add(time.Hour)
@@ -582,6 +603,425 @@ func TestParseEventBody_skipsOtherCodepages(t *testing.T) {
 	parseEventBody(&out, body)
 	if out.BodyType != 0 {
 		t.Errorf("expected zero BodyType, got %v", out.BodyType)
+	}
+}
+
+func TestSyncCalendar_invalidKeyResetFails(t *testing.T) {
+	// Status=3 → SetSyncKey reset fails → error wraps "reset key".
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+			wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("3")),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	es := &errStateStore{inner: NewMemoryState()}
+	c.cfg.State = es
+	_ = es.inner.SetSyncKey(context.Background(), "cal", "STALE")
+	es.setSyncKeyErr = errSentinel("ro")
+	_, err := c.SyncCalendar(context.Background(), "cal", CalendarSyncOptions{NoBootstrap: true})
+	if err == nil || !strings.Contains(err.Error(), "reset key") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestSyncCalendar_bootstrapTwoCallsWhenEmpty(t *testing.T) {
+	// First call returns empty result (no items), second call (bootstrap
+	// re-call) returns the actual events.
+	calls := 0
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		if calls == 1 {
+			// Empty bootstrap reply.
+			w.Write(calendarSyncResponse("CK-BOOT"))
+			return
+		}
+		w.Write(calendarSyncResponse("CK-DATA",
+			eventAdd("ev-1", "Real Event",
+				time.Date(2026, 5, 10, 9, 0, 0, 0, time.UTC),
+				time.Date(2026, 5, 10, 10, 0, 0, 0, time.UTC),
+			),
+		))
+	})
+	res, err := c.SyncCalendar(context.Background(), "cal", CalendarSyncOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Errorf("calls = %d, want 2", calls)
+	}
+	if len(res.Added) != 1 {
+		t.Errorf("added = %+v", res.Added)
+	}
+}
+
+func TestSyncCalendar_syncKeyReadError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be reached")
+	})
+	c.cfg.State = &errStateStore{inner: NewMemoryState(), syncKeyErr: errSentinel("read fail")}
+	if _, err := c.SyncCalendar(context.Background(), "cal", CalendarSyncOptions{NoBootstrap: true}); err == nil {
+		t.Error("want SyncKey read error")
+	}
+}
+
+func TestSyncCalendar_postErrorPropagates(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	})
+	if _, err := c.SyncCalendar(context.Background(), "cal", CalendarSyncOptions{NoBootstrap: true}); err == nil {
+		t.Error("want HTTP error")
+	}
+}
+
+func TestSyncCalendar_missingCollection(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+			wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("1")),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "cal", "K1")
+	if _, err := c.SyncCalendar(context.Background(), "cal", CalendarSyncOptions{NoBootstrap: true}); err == nil {
+		t.Error("want missing-Collection error")
+	}
+}
+
+func TestSyncCalendar_moreAvailableAndChangeDelete(t *testing.T) {
+	change := wbxml.E(wbxml.PageAirSync, "Change",
+		wbxml.E(wbxml.PageAirSync, "ServerId", wbxml.Text("ev-2")),
+		wbxml.E(wbxml.PageAirSync, "ApplicationData",
+			wbxml.E(wbxml.PageCalendar, "Subject", wbxml.Text("Renamed")),
+		),
+	)
+	del := wbxml.E(wbxml.PageAirSync, "Delete",
+		wbxml.E(wbxml.PageAirSync, "ServerId", wbxml.Text("ev-3")),
+	)
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		// Add MoreAvailable to the canned response.
+		collection := wbxml.E(wbxml.PageAirSync, "Collection",
+			wbxml.E(wbxml.PageAirSync, "SyncKey", wbxml.Text("K2")),
+			wbxml.E(wbxml.PageAirSync, "CollectionId", wbxml.Text("cal")),
+			wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("1")),
+			wbxml.E(wbxml.PageAirSync, "MoreAvailable"),
+			wbxml.E(wbxml.PageAirSync, "Commands",
+				wbxml.Text("stray"), // exercise non-element skip
+				change,
+				del,
+			),
+		)
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+			wbxml.E(wbxml.PageAirSync, "Collections", collection),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "cal", "K1")
+	res, err := c.SyncCalendar(context.Background(), "cal", CalendarSyncOptions{NoBootstrap: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.MoreAvailable {
+		t.Error("MoreAvailable not set")
+	}
+	if len(res.Changed) != 1 || res.Changed[0].Subject != "Renamed" {
+		t.Errorf("changed = %+v", res.Changed)
+	}
+	if len(res.Deleted) != 1 || res.Deleted[0] != "ev-3" {
+		t.Errorf("deleted = %v", res.Deleted)
+	}
+}
+
+func TestSyncCalendar_missingSyncKey(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+			wbxml.E(wbxml.PageAirSync, "Collections",
+				wbxml.E(wbxml.PageAirSync, "Collection",
+					wbxml.E(wbxml.PageAirSync, "CollectionId", wbxml.Text("cal")),
+					wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("1")),
+					// no SyncKey
+				),
+			),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "cal", "K1")
+	_, err := c.SyncCalendar(context.Background(), "cal", CalendarSyncOptions{NoBootstrap: true})
+	if err == nil || !strings.Contains(err.Error(), "SyncKey") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestSyncCalendar_persistKeyError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(calendarSyncResponse("NEW"))
+	})
+	es := &errStateStore{inner: NewMemoryState()}
+	c.cfg.State = es
+	_ = es.inner.SetSyncKey(context.Background(), "cal", "K1")
+	es.setSyncKeyErr = errSentinel("ro")
+	_, err := c.SyncCalendar(context.Background(), "cal", CalendarSyncOptions{NoBootstrap: true})
+	if err == nil || !strings.Contains(err.Error(), "persist") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestParseEventFromCommand_nilApp(t *testing.T) {
+	el := wbxml.E(wbxml.PageAirSync, "Add",
+		wbxml.E(wbxml.PageAirSync, "ServerId", wbxml.Text("ev-1")),
+		// no ApplicationData
+	)
+	got := parseEventFromCommand(el)
+	if got.ServerID != "ev-1" {
+		t.Errorf("got %+v", got)
+	}
+}
+
+func TestParseEventFromCommand_skipsNonElementAndForeignBody(t *testing.T) {
+	el := wbxml.E(wbxml.PageAirSync, "Add",
+		wbxml.E(wbxml.PageAirSync, "ServerId", wbxml.Text("ev-1")),
+		wbxml.E(wbxml.PageAirSync, "ApplicationData",
+			wbxml.Text("stray"), // non-element child
+			wbxml.E(wbxml.PageCalendar, "Subject", wbxml.Text("S")),
+			wbxml.E(wbxml.PageAirSyncBase, "Body",
+				wbxml.E(wbxml.PageAirSyncBase, "Type", wbxml.Text("1")),
+				wbxml.E(wbxml.PageAirSyncBase, "Data", wbxml.Text("body")),
+			),
+		),
+	)
+	got := parseEventFromCommand(el)
+	if got.Subject != "S" || got.Body != "body" {
+		t.Errorf("got %+v", got)
+	}
+}
+
+func TestParseCalendarField_recurrenceAndExceptions(t *testing.T) {
+	out := EventItem{}
+	rec := wbxml.E(wbxml.PageCalendar, "Recurrence",
+		wbxml.E(wbxml.PageCalendar, "Recurrence_Type", wbxml.Text("1")),
+	)
+	parseCalendarField(&out, rec)
+	if out.Recurrence == nil || out.Recurrence.Type != RecurrenceWeekly {
+		t.Errorf("recurrence = %+v", out.Recurrence)
+	}
+	exc := wbxml.E(wbxml.PageCalendar, "Exceptions",
+		wbxml.Text("stray"), // non-element skipped
+		wbxml.E(wbxml.PageCalendar, "Exception",
+			wbxml.E(wbxml.PageCalendar, "ExceptionStartTime", wbxml.Text("2026-05-15T10:00:00Z")),
+			wbxml.E(wbxml.PageCalendar, "Subject", wbxml.Text("changed")),
+		),
+	)
+	parseCalendarField(&out, exc)
+	if len(out.Exceptions) != 1 || out.Exceptions[0].Subject != "changed" {
+		t.Errorf("exceptions = %+v", out.Exceptions)
+	}
+}
+
+func TestParseCalendarField_skipsNonAttendee(t *testing.T) {
+	out := EventItem{}
+	atts := wbxml.E(wbxml.PageCalendar, "Attendees",
+		wbxml.E(wbxml.PageCalendar, "Subject", wbxml.Text("ignored")), // not Attendee
+		wbxml.E(wbxml.PageCalendar, "Attendee",
+			wbxml.E(wbxml.PageCalendar, "Name", wbxml.Text("Bob")),
+			wbxml.E(wbxml.PageCalendar, "Email", wbxml.Text("bob@x")),
+			wbxml.E(wbxml.PageCalendar, "AttendeeStatus", wbxml.Text("3")),
+			wbxml.E(wbxml.PageCalendar, "AttendeeType", wbxml.Text("1")),
+		),
+	)
+	parseCalendarField(&out, atts)
+	if len(out.Attendees) != 1 || out.Attendees[0].Email != "bob@x" {
+		t.Errorf("attendees = %+v", out.Attendees)
+	}
+}
+
+func TestCreateEvent_validation(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be reached")
+	})
+	if _, err := c.CreateEvent(context.Background(), "", EventDraft{}); err == nil {
+		t.Error("want error for empty folderID")
+	}
+	if _, err := c.CreateEvent(context.Background(), "cal", EventDraft{}); err == nil {
+		t.Error("want error for missing StartTime/EndTime")
+	}
+}
+
+func TestCreateEvent_ensureSyncedFails(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be reached")
+	})
+	c.cfg.State = &errStateStore{inner: NewMemoryState(), syncKeyErr: errSentinel("boom")}
+	_, err := c.CreateEvent(context.Background(), "cal", EventDraft{
+		StartTime: time.Date(2026, 5, 10, 9, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 5, 10, 10, 0, 0, 0, time.UTC),
+	})
+	if err == nil {
+		t.Error("want ensureSynced error")
+	}
+}
+
+func TestCreateEvent_postErrorPropagates(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "cal", "K1")
+	_, err := c.CreateEvent(context.Background(), "cal", EventDraft{
+		StartTime: time.Date(2026, 5, 10, 9, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 5, 10, 10, 0, 0, 0, time.UTC),
+	})
+	if err == nil {
+		t.Error("want HTTP error")
+	}
+}
+
+func TestCreateEvent_responseFallbackToClientID(t *testing.T) {
+	// Server replies with a stray non-Add Response — CreateEvent must
+	// fall back to returning the client-generated id.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+			wbxml.E(wbxml.PageAirSync, "Collections",
+				wbxml.E(wbxml.PageAirSync, "Collection",
+					wbxml.E(wbxml.PageAirSync, "SyncKey", wbxml.Text("CK-DONE")),
+					wbxml.E(wbxml.PageAirSync, "CollectionId", wbxml.Text("cal")),
+					wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("1")),
+					wbxml.E(wbxml.PageAirSync, "Responses",
+						wbxml.E(wbxml.PageAirSync, "Change",
+							wbxml.E(wbxml.PageAirSync, "ServerId", wbxml.Text("ignored")),
+						),
+					),
+				),
+			),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "cal", "K1")
+	id, err := c.CreateEvent(context.Background(), "cal", EventDraft{
+		StartTime: time.Date(2026, 5, 10, 9, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 5, 10, 10, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id == "" {
+		t.Error("expected client-generated id fallback")
+	}
+}
+
+func TestUpdateEvent_validation(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be reached")
+	})
+	if err := c.UpdateEvent(context.Background(), "", "id", EventDraft{}); err == nil {
+		t.Error("want error for empty folderID")
+	}
+	if err := c.UpdateEvent(context.Background(), "cal", "", EventDraft{}); err == nil {
+		t.Error("want error for empty serverID")
+	}
+}
+
+func TestUpdateEvent_ensureSyncedFails(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be reached")
+	})
+	c.cfg.State = &errStateStore{inner: NewMemoryState(), syncKeyErr: errSentinel("boom")}
+	if err := c.UpdateEvent(context.Background(), "cal", "id", EventDraft{}); err == nil {
+		t.Error("want ensureSynced error")
+	}
+}
+
+func TestDeleteEvent_validation(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be reached")
+	})
+	if err := c.DeleteEvent(context.Background(), "", "id"); err == nil {
+		t.Error("want error for empty folderID")
+	}
+	if err := c.DeleteEvent(context.Background(), "cal", ""); err == nil {
+		t.Error("want error for empty serverID")
+	}
+}
+
+func TestDeleteEvent_ensureSyncedFails(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be reached")
+	})
+	c.cfg.State = &errStateStore{inner: NewMemoryState(), syncKeyErr: errSentinel("boom")}
+	if err := c.DeleteEvent(context.Background(), "cal", "id"); err == nil {
+		t.Error("want ensureSynced error")
+	}
+}
+
+func TestSendSyncCommands_syncKeyReadError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be reached")
+	})
+	c.cfg.State = &errStateStore{inner: NewMemoryState(), syncKeyErr: errSentinel("read fail")}
+	cmds := wbxml.E(wbxml.PageAirSync, "Commands",
+		wbxml.E(wbxml.PageAirSync, "Delete",
+			wbxml.E(wbxml.PageAirSync, "ServerId", wbxml.Text("x")),
+		),
+	)
+	if _, err := c.sendSyncCommands(context.Background(), "cal", cmds); err == nil ||
+		!strings.Contains(err.Error(), "read key") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestSendSyncCommands_emptyResponseIsNil(t *testing.T) {
+	// Empty 200 OK from the server. sendSyncCommands returns (nil, nil)
+	// — UpdateEvent surfaces no error since (_, err) is nil.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200) // empty body
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "cal", "K1")
+	if err := c.UpdateEvent(context.Background(), "cal", "id", EventDraft{}); err != nil {
+		t.Errorf("empty response should not error, got %v", err)
+	}
+}
+
+func TestSendSyncCommands_collectionStatusError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+			wbxml.E(wbxml.PageAirSync, "Collections",
+				wbxml.E(wbxml.PageAirSync, "Collection",
+					wbxml.E(wbxml.PageAirSync, "SyncKey", wbxml.Text("K2")),
+					wbxml.E(wbxml.PageAirSync, "CollectionId", wbxml.Text("cal")),
+					wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("8")),
+				),
+			),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "cal", "K1")
+	if err := c.UpdateEvent(context.Background(), "cal", "id", EventDraft{}); !IsStatusCode(err, 8) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestSendSyncCommands_persistKeyError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(calendarSyncResponse("NEW"))
+	})
+	es := &errStateStore{inner: NewMemoryState()}
+	c.cfg.State = es
+	_ = es.inner.SetSyncKey(context.Background(), "cal", "K1")
+	es.setSyncKeyErr = errSentinel("ro")
+	if err := c.UpdateEvent(context.Background(), "cal", "id", EventDraft{}); err == nil ||
+		!strings.Contains(err.Error(), "persist") {
+		t.Errorf("err = %v", err)
 	}
 }
 
