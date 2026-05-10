@@ -4,6 +4,48 @@ All notable changes to this project are documented here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely
 and the project follows [Semantic Versioning](https://semver.org/).
 
+## [v1.1.0] — 2026-05-10
+
+### Added
+
+- **Autodiscover well-known fallback.** After the four schema-aware
+  Autodiscover steps fail, the library now probes the canonical EAS
+  path at `<domain>`, `autodiscover.<domain>`, and `mail.<domain>`
+  via HTTP OPTIONS and accepts any 2xx response carrying an
+  `MS-Server-ActiveSync` or `MS-ASProtocolVersions` header. Handles
+  deployments whose autodiscover responder doesn't speak the EAS
+  `mobilesync` request schema — notably SOGo, which historically
+  implements only the Outlook schema and rejects mobilesync with
+  HTTP 400 `<ErrorCode>601</ErrorCode>`. Default on; opt out via the
+  new `AutodiscoverOptions.SkipWellKnownFallback` field.
+- **`cmd/eas-autoprobe`** — one-shot, read-only EAS protocol probe.
+  Runs Autodiscover, Provision, FolderSync, plus per-class Sync /
+  GetItemEstimate / FetchEmail / SearchEmail / GAL / Settings / OOF
+  against one account. Reports per-step OK/FAIL with elapsed
+  milliseconds; exits non-zero if any step failed. Human-readable
+  table (default) or `-json` output. Credentials via `EAS_PROBE_USER`
+  / `EAS_PROBE_SERVER` / `EAS_PROBE_PASSWORD` env vars (password
+  never via flag). Optional `-ping` step for the long-poll path.
+
+### Docs
+
+- `eas/README.md` gains an Autodiscover section documenting the
+  5-step flow and a Server-specific notes table covering known
+  interop gaps with SOGo autodiscover and Z-Push BackendIMAP
+  (`ResolveRecipients` status 5, empty `Accounts` from
+  `GetUserInformation`, the Ping `<Folder>` parser shape already
+  shipped in v0.2).
+- Repo-root README gets a Packages-table entry for `cmd/eas-autoprobe`
+  and a note about the well-known fallback in the Autodiscover
+  capability list.
+
+### testenv
+
+- New `make probe` target runs `cmd/eas-autoprobe` against the local
+  Z-Push stack using the existing testenv credentials, with those
+  credentials hoisted to individual make variables so both `test`
+  and `probe` reference one source of truth.
+
 ## [v1.0.0] — 2026-05-10
 
 **Breaking change.** The library API is now interface-first. Every
@@ -146,6 +188,7 @@ mTLS), and the WBXML codec the spec is built on.
 
 Tested against Z-Push 2.7.6 + Dovecot via the bundled testenv stack.
 
+[v1.1.0]: https://github.com/hstern/go-activesync/releases/tag/v1.1.0
 [v1.0.0]: https://github.com/hstern/go-activesync/releases/tag/v1.0.0
 [v0.2.1]: https://github.com/hstern/go-activesync/releases/tag/v0.2.1
 [v0.2.0]: https://github.com/hstern/go-activesync/releases/tag/v0.2.0
