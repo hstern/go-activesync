@@ -34,7 +34,7 @@ type NotesSyncResult struct {
 }
 
 // SyncNotes fetches a notes folder.
-func (c *Client) SyncNotes(ctx context.Context, folderID string) (*NotesSyncResult, error) {
+func (c *httpClient) SyncNotes(ctx context.Context, folderID string) (*NotesSyncResult, error) {
 	if folderID == "" {
 		return nil, errors.New("eas: SyncNotes: folderID is required")
 	}
@@ -59,17 +59,17 @@ func (c *Client) SyncNotes(ctx context.Context, folderID string) (*NotesSyncResu
 }
 
 // CreateNote creates a new note.
-func (c *Client) CreateNote(ctx context.Context, folderID string, draft NoteDraft) (string, error) {
+func (c *httpClient) CreateNote(ctx context.Context, folderID string, draft NoteDraft) (string, error) {
 	return c.addItemViaSync(ctx, folderID, buildNoteApp(draft))
 }
 
 // UpdateNote modifies an existing note.
-func (c *Client) UpdateNote(ctx context.Context, folderID, serverID string, draft NoteDraft) error {
+func (c *httpClient) UpdateNote(ctx context.Context, folderID, serverID string, draft NoteDraft) error {
 	return c.changeItemViaSync(ctx, folderID, serverID, buildNoteApp(draft))
 }
 
 // DeleteNote removes a note.
-func (c *Client) DeleteNote(ctx context.Context, folderID, serverID string) error {
+func (c *httpClient) DeleteNote(ctx context.Context, folderID, serverID string) error {
 	return c.deleteItemViaSync(ctx, folderID, serverID)
 }
 

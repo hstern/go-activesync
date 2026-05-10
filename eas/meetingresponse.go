@@ -29,7 +29,7 @@ type MeetingResponseResult struct {
 // RespondInvite issues a MeetingResponse against an invite item that
 // landed in the user's inbox. folderID/serverID identify the invite
 // message; choice is accept/tentative/decline.
-func (c *Client) RespondInvite(ctx context.Context, folderID, serverID string, choice MeetingResponseChoice) (*MeetingResponseResult, error) {
+func (c *httpClient) RespondInvite(ctx context.Context, folderID, serverID string, choice MeetingResponseChoice) (*MeetingResponseResult, error) {
 	if folderID == "" || serverID == "" {
 		return nil, errors.New("eas: RespondInvite: folderID and serverID are required")
 	}

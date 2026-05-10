@@ -41,7 +41,7 @@ type OofConfig struct {
 
 // GetOof reads the current Out-of-Office configuration via the
 // Settings/Oof/Get command.
-func (c *Client) GetOof(ctx context.Context) (*OofConfig, error) {
+func (c *httpClient) GetOof(ctx context.Context) (*OofConfig, error) {
 	doc := &wbxml.Document{
 		Root: wbxml.E(wbxml.PageSettings, "Settings",
 			wbxml.E(wbxml.PageSettings, "Oof",
@@ -130,7 +130,7 @@ func (c *Client) GetOof(ctx context.Context) (*OofConfig, error) {
 
 // SetOof updates the user's Out-of-Office configuration via the
 // Settings/Oof/Set command.
-func (c *Client) SetOof(ctx context.Context, cfg OofConfig) error {
+func (c *httpClient) SetOof(ctx context.Context, cfg OofConfig) error {
 	set := wbxml.E(wbxml.PageSettings, "Set",
 		wbxml.E(wbxml.PageSettings, "OofState", wbxml.Text(itoa(int(cfg.State)))),
 	)
@@ -204,7 +204,7 @@ type UserAccount struct {
 // (sync daemons, headless agents) this is mostly a no-op compliance
 // signal — the caller can't actually lock the host — but reporting
 // compliance keeps strict servers happy.
-func (c *Client) SetDevicePassword(ctx context.Context, newPassword string) error {
+func (c *httpClient) SetDevicePassword(ctx context.Context, newPassword string) error {
 	set := wbxml.E(wbxml.PageSettings, "Set")
 	if newPassword != "" {
 		set.Children = append(set.Children, wbxml.E(wbxml.PageSettings, "Password", wbxml.Text(newPassword)))
@@ -239,7 +239,7 @@ func (c *Client) SetDevicePassword(ctx context.Context, newPassword string) erro
 // GetUserInformation reads Settings/UserInformation, returning the
 // primary email address and any additional account info the server
 // exposes.
-func (c *Client) GetUserInformation(ctx context.Context) (*UserInformation, error) {
+func (c *httpClient) GetUserInformation(ctx context.Context) (*UserInformation, error) {
 	doc := &wbxml.Document{
 		Root: wbxml.E(wbxml.PageSettings, "Settings",
 			wbxml.E(wbxml.PageSettings, "UserInformation",

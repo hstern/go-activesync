@@ -28,7 +28,7 @@ type FolderCreateResult struct {
 // folderType matches MS-ASCMD §2.2.3.171 (the same enum as
 // FolderSync's Folder.Type). Common values: 12=UserMail, 13=UserCalendar,
 // 14=UserContacts, 15=UserTasks, 17=UserNotes, 1=UserGeneric.
-func (c *Client) FolderCreate(ctx context.Context, parentID, displayName string, folderType FolderType) (*FolderCreateResult, error) {
+func (c *httpClient) FolderCreate(ctx context.Context, parentID, displayName string, folderType FolderType) (*FolderCreateResult, error) {
 	if displayName == "" {
 		return nil, errors.New("eas: FolderCreate: displayName is required")
 	}
@@ -70,7 +70,7 @@ func (c *Client) FolderCreate(ctx context.Context, parentID, displayName string,
 
 // FolderUpdate renames a folder and/or moves it under a new parent.
 // Pass an empty newParentID to leave the parent unchanged.
-func (c *Client) FolderUpdate(ctx context.Context, serverID, newParentID, newDisplayName string) error {
+func (c *httpClient) FolderUpdate(ctx context.Context, serverID, newParentID, newDisplayName string) error {
 	if serverID == "" || newDisplayName == "" {
 		return errors.New("eas: FolderUpdate: serverID and newDisplayName are required")
 	}
@@ -96,7 +96,7 @@ func (c *Client) FolderUpdate(ctx context.Context, serverID, newParentID, newDis
 }
 
 // FolderDelete removes a folder by its server-assigned id.
-func (c *Client) FolderDelete(ctx context.Context, serverID string) error {
+func (c *httpClient) FolderDelete(ctx context.Context, serverID string) error {
 	if serverID == "" {
 		return errors.New("eas: FolderDelete: serverID is required")
 	}
@@ -119,7 +119,7 @@ func (c *Client) FolderDelete(ctx context.Context, serverID string) error {
 
 // applyFolderHierarchyResp parses Status + SyncKey from a FolderUpdate
 // or FolderDelete response and persists the new sync key.
-func (c *Client) applyFolderHierarchyResp(ctx context.Context, resp *wbxml.Document, cmd string) error {
+func (c *httpClient) applyFolderHierarchyResp(ctx context.Context, resp *wbxml.Document, cmd string) error {
 	if resp == nil || resp.Root == nil {
 		return fmt.Errorf("eas: %s: empty response", cmd)
 	}

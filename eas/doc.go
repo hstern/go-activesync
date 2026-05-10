@@ -10,9 +10,11 @@
 //
 // # Usage
 //
-// A Client wraps the connection state for a single account. Construct one
-// with NewClient, providing pre-resolved credentials and a StateStore for
-// SyncKey / PolicyKey persistence:
+// [Client] is an interface composed of one sub-interface per feature
+// area (EmailClient, CalendarClient, ContactsClient, …). [NewClient]
+// returns a Client; the concrete type is unexported. Provide
+// pre-resolved credentials and a [StateStore] for SyncKey / PolicyKey
+// persistence:
 //
 //	c, err := eas.NewClient(eas.Config{
 //	    ServerURL: "https://mail.example.com/Microsoft-Server-ActiveSync",
@@ -26,10 +28,22 @@
 //	if err := c.Provision(ctx); err != nil { return err }
 //	folders, err := c.FolderSync(ctx)
 //
+// Callers that touch only a slice of the protocol can depend on the
+// narrower sub-interface — e.g. an inbox-summarising tool can accept
+// an [EmailClient] + [FolderClient] and stay decoupled from the rest.
+//
+// # Testing
+//
+// The [github.com/hstern/go-activesync/eas/easmock] subpackage
+// provides hand-written test doubles for [Client] and every
+// sub-interface. Set the *Func fields you care about; methods whose
+// Func is nil return a sentinel error so a test fails loudly rather
+// than silently calling a no-op.
+//
 // # Stateful commands
 //
 // Commands that change server-side state (Provision, Sync, FolderSync) read
-// and write keys via the StateStore. Persist state across process restarts
+// and write keys via the [StateStore]. Persist state across process restarts
 // by providing a durable implementation; an in-memory store is supplied for
 // tests and one-shot CLIs.
 //

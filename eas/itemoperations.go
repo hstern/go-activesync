@@ -24,7 +24,7 @@ type FetchEmailOptions struct {
 // The Sync command also returns email content, but typically truncated to
 // fit within a sync window. Use FetchEmail when the caller wants the full
 // body or the raw MIME source.
-func (c *Client) FetchEmail(ctx context.Context, folderID, serverID string, opts FetchEmailOptions) (*EmailItem, error) {
+func (c *httpClient) FetchEmail(ctx context.Context, folderID, serverID string, opts FetchEmailOptions) (*EmailItem, error) {
 	if folderID == "" || serverID == "" {
 		return nil, errors.New("eas: FetchEmail: folderID and serverID are required")
 	}

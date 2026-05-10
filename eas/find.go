@@ -48,7 +48,7 @@ type FindHit struct {
 //
 // Most callers should use SearchEmail (works on 14.x); Find is
 // available for callers that target newer servers.
-func (c *Client) FindEmail(ctx context.Context, query string, opts FindOptions) (*FindResult, error) {
+func (c *httpClient) FindEmail(ctx context.Context, query string, opts FindOptions) (*FindResult, error) {
 	if query == "" {
 		return nil, errors.New("eas: FindEmail: query is required")
 	}

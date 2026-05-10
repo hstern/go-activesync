@@ -53,7 +53,7 @@ var supportedVersions = []string{"14.1", "14.0", "16.1", "16.0", "12.1", "12.0"}
 // Call once before any WBXML command if the server's protocol set is
 // unknown. The Manager calls this transparently before the first
 // Provision exchange.
-func (c *Client) NegotiateVersion(ctx context.Context) (string, error) {
+func (c *httpClient) NegotiateVersion(ctx context.Context) (string, error) {
 	opts, err := c.Options(ctx)
 	if err != nil {
 		return c.cfg.ASVersion, err
@@ -75,7 +75,7 @@ func (c *Client) NegotiateVersion(ctx context.Context) (string, error) {
 // capabilities. No authentication or policy key is required by the spec
 // for OPTIONS, but in practice servers refuse anonymous OPTIONS so we send
 // Authorization anyway.
-func (c *Client) Options(ctx context.Context) (*OptionsResult, error) {
+func (c *httpClient) Options(ctx context.Context) (*OptionsResult, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodOptions, c.baseURL.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("eas: OPTIONS: build request: %w", err)

@@ -55,7 +55,7 @@ type ResolveResponse struct {
 // ResolveRecipients asks the server to resolve and disambiguate one or
 // more email addresses or display-name strings against the GAL and
 // the user's contacts. Returns one ResolveResponse per input string.
-func (c *Client) ResolveRecipients(ctx context.Context, recipients []string, opts ResolveOptions) ([]ResolveResponse, error) {
+func (c *httpClient) ResolveRecipients(ctx context.Context, recipients []string, opts ResolveOptions) ([]ResolveResponse, error) {
 	if len(recipients) == 0 {
 		return nil, errors.New("eas: ResolveRecipients: at least one recipient required")
 	}

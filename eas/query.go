@@ -114,6 +114,6 @@ var (
 // query. Falls through to the same Search implementation as SearchEmail
 // but skips the "And + Class=Email + FreeText" wrapper so callers can
 // build whatever shape they want.
-func (c *Client) SearchEmailQuery(ctx context.Context, q Query, opts EmailSearchOptions) (*EmailSearchResult, error) {
+func (c *httpClient) SearchEmailQuery(ctx context.Context, q Query, opts EmailSearchOptions) (*EmailSearchResult, error) {
 	return c.searchStructured(ctx, q, opts)
 }

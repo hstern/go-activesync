@@ -75,8 +75,10 @@ type Config struct {
 	Base64URL bool
 }
 
-// Client is a single-account EAS client. Construct with NewClient.
-type Client struct {
+// httpClient is the production [Client] implementation. Construct via
+// [NewClient]; callers receive the [Client] interface and never name
+// this type directly.
+type httpClient struct {
 	cfg     Config
 	auth    string // pre-built "Basic <base64>" header value
 	baseURL *url.URL
@@ -88,7 +90,11 @@ type Client struct {
 // NewClient validates the Config, applies defaults, and returns a ready
 // Client. The returned client makes no network calls until a command
 // method is invoked.
-func NewClient(cfg Config) (*Client, error) {
+//
+// The returned value satisfies the [Client] interface; the concrete
+// type is unexported. For unit tests, see the easmock subpackage which
+// provides hand-written test doubles.
+func NewClient(cfg Config) (Client, error) {
 	if cfg.ServerURL == "" {
 		return nil, errors.New("eas: Config.ServerURL is required")
 	}
@@ -131,7 +137,7 @@ func NewClient(cfg Config) (*Client, error) {
 	if cfg.Registry == nil {
 		cfg.Registry = wbxml.DefaultRegistry()
 	}
-	c := &Client{cfg: cfg, baseURL: u}
+	c := &httpClient{cfg: cfg, baseURL: u}
 	if cfg.AuthHeader == nil {
 		// Pre-build the Basic header once; nothing changes between requests.
 		val := base64.StdEncoding.EncodeToString([]byte(cfg.Username + ":" + cfg.Password))
@@ -144,7 +150,7 @@ func NewClient(cfg Config) (*Client, error) {
 // the User/DeviceId/DeviceType/Cmd parameters are sent as a normal query
 // string (Z-Push and SOGo expect this); set Config.Base64URL to switch
 // to the alternative single-parameter base64 encoding from MS-ASHTTP.
-func (c *Client) commandURL(cmd string) string {
+func (c *httpClient) commandURL(cmd string) string {
 	if c.cfg.Base64URL {
 		if encoded, err := c.applyB64ToURL(cmd, c.baseURL.String()); err == nil {
 			return encoded
@@ -165,7 +171,7 @@ func (c *Client) commandURL(cmd string) string {
 // post issues a WBXML POST for the given command and returns the parsed
 // response document. Sets all standard headers; reads the policy key from
 // the StateStore if one has been persisted.
-func (c *Client) post(ctx context.Context, cmd string, body *wbxml.Document) (*wbxml.Document, error) {
+func (c *httpClient) post(ctx context.Context, cmd string, body *wbxml.Document) (*wbxml.Document, error) {
 	bodyBytes, err := wbxml.Marshal(body, c.cfg.Registry)
 	if err != nil {
 		return nil, fmt.Errorf("eas: %s: marshal: %w", cmd, err)
@@ -198,7 +204,7 @@ func (c *Client) post(ctx context.Context, cmd string, body *wbxml.Document) (*w
 //     the X-MS-PolicyKey is missing or stale; the spec mandates this
 //     recovery and we always do it. Skipped for the Provision command
 //     itself to avoid a recursive loop.
-func (c *Client) postRaw(ctx context.Context, cmd string, body []byte) ([]byte, error) {
+func (c *httpClient) postRaw(ctx context.Context, cmd string, body []byte) ([]byte, error) {
 	respBody, err := c.postRawOnce(ctx, cmd, body)
 	if err != nil {
 		switch {
@@ -216,7 +222,7 @@ func (c *Client) postRaw(ctx context.Context, cmd string, body []byte) ([]byte, 
 	return respBody, err
 }
 
-func (c *Client) postRawOnce(ctx context.Context, cmd string, body []byte) ([]byte, error) {
+func (c *httpClient) postRawOnce(ctx context.Context, cmd string, body []byte) ([]byte, error) {
 	target := c.commandURL(cmd)
 
 	var (
@@ -303,7 +309,7 @@ func (c *Client) postRawOnce(ctx context.Context, cmd string, body []byte) ([]by
 // authHeaderValue returns the Authorization header value for one
 // request. Uses Config.AuthHeader if set; otherwise the pre-built Basic
 // header from NewClient.
-func (c *Client) authHeaderValue(ctx context.Context) (string, error) {
+func (c *httpClient) authHeaderValue(ctx context.Context) (string, error) {
 	if c.cfg.AuthHeader != nil {
 		return c.cfg.AuthHeader(ctx)
 	}
@@ -313,7 +319,7 @@ func (c *Client) authHeaderValue(ctx context.Context) (string, error) {
 // httpDo issues an arbitrary request through the client's HTTP layer.
 // Used by Options (HTTP OPTIONS verb) and Autodiscover (XML POST with
 // different content type).
-func (c *Client) httpDo(req *http.Request) (*http.Response, error) {
+func (c *httpClient) httpDo(req *http.Request) (*http.Response, error) {
 	req.Header.Set("User-Agent", c.cfg.UserAgent)
 	if req.Header.Get("Authorization") == "" {
 		val, err := c.authHeaderValue(req.Context())

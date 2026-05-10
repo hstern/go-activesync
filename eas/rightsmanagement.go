@@ -26,7 +26,7 @@ type RightsTemplate struct {
 // Templates are passed by ID to ItemOperations Move or Sync ApplicationData
 // when sending IRM-protected messages (out of scope here; library users
 // can build the WBXML directly using PageRightsManagement).
-func (c *Client) GetRightsManagementTemplates(ctx context.Context) ([]RightsTemplate, error) {
+func (c *httpClient) GetRightsManagementTemplates(ctx context.Context) ([]RightsTemplate, error) {
 	doc := &wbxml.Document{
 		Root: wbxml.E(wbxml.PageSettings, "Settings",
 			wbxml.E(wbxml.PageSettings, "RightsManagementInformation",

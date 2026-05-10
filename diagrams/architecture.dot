@@ -15,9 +15,10 @@ digraph architecture {
         label="github.com/hstern/go-activesync";
         labeljust=l; fontname="Helvetica"; fontsize=11; color="#888888"; style=dashed;
 
-        eas    [label="eas.Client\n\nFolderSync, SyncEmail,\nSendMail, CreateEvent,\nResolveRecipients,\nProvision, Ping, …", fillcolor="#cfe2f3"];
-        wbxml  [label="wbxml\n\n25 EAS code pages\nMarshal / Unmarshal", fillcolor="#cfe2f3"];
-        state  [label="StateStore\n(interface)\n\nPolicyKey,\nper-folder SyncKey", fillcolor="#fff2cc"];
+        eas     [label="eas.Client\n(interface)\n\nFolderSync, SyncEmail,\nSendMail, CreateEvent,\nResolveRecipients,\nProvision, Ping, …", fillcolor="#cfe2f3"];
+        wbxml   [label="wbxml\n\n25 EAS code pages\nMarshal / Unmarshal", fillcolor="#cfe2f3"];
+        state   [label="StateStore\n(interface)\n\nPolicyKey,\nper-folder SyncKey", fillcolor="#fff2cc"];
+        easmock [label="easmock\n\nhand-written\ntest doubles", fillcolor="#fce5cd", style="rounded,filled,dashed"];
     }
 
     transport [label="*http.Client\n+ optional auth wrap\n(NTLM / SPNEGO / mTLS)", fillcolor="#d9ead3"];
@@ -33,4 +34,6 @@ digraph architecture {
 
     eas -> state [label="read/write keys", arrowhead=normal, dir=both];
     state -> store [label="implementor's choice", style=dashed, arrowhead=none];
+
+    easmock -> eas [label="satisfies\nfor tests", style=dashed, arrowhead=onormal];
 }

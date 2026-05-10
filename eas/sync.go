@@ -75,7 +75,7 @@ type EmailSyncResult struct {
 // On Status=3 (InvalidSyncKey) SyncEmail resets the persisted key to "0"
 // and retries once. This is the canonical recovery for server-side state
 // resets and matches FolderSync's behavior.
-func (c *Client) SyncEmail(ctx context.Context, folderID string, opts EmailSyncOptions) (*EmailSyncResult, error) {
+func (c *httpClient) SyncEmail(ctx context.Context, folderID string, opts EmailSyncOptions) (*EmailSyncResult, error) {
 	if folderID == "" {
 		return nil, errors.New("eas: SyncEmail: folderID is required")
 	}
@@ -123,7 +123,7 @@ func (c *Client) SyncEmail(ctx context.Context, folderID string, opts EmailSyncO
 	return res, nil
 }
 
-func (c *Client) syncEmailOnce(ctx context.Context, folderID string, opts EmailSyncOptions) (*EmailSyncResult, error) {
+func (c *httpClient) syncEmailOnce(ctx context.Context, folderID string, opts EmailSyncOptions) (*EmailSyncResult, error) {
 	key, err := c.cfg.State.SyncKey(ctx, folderID)
 	if err != nil {
 		return nil, fmt.Errorf("eas: SyncEmail: read key: %w", err)
@@ -201,7 +201,7 @@ func buildSyncRequest(folderID, key string, opts EmailSyncOptions) *wbxml.Docume
 	return &wbxml.Document{Root: root}
 }
 
-func parseSyncResponse(ctx context.Context, c *Client, folderID string, root *wbxml.Element) (*EmailSyncResult, error) {
+func parseSyncResponse(ctx context.Context, c *httpClient, folderID string, root *wbxml.Element) (*EmailSyncResult, error) {
 	if st := topStatus(root); st != 0 && st != StatusOK {
 		return nil, &StatusError{Command: "Sync", Code: st}
 	}

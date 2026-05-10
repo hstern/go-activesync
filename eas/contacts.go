@@ -85,7 +85,7 @@ type ContactsSyncResult struct {
 }
 
 // SyncContacts issues a Sync command for a contacts folder.
-func (c *Client) SyncContacts(ctx context.Context, folderID string) (*ContactsSyncResult, error) {
+func (c *httpClient) SyncContacts(ctx context.Context, folderID string) (*ContactsSyncResult, error) {
 	if folderID == "" {
 		return nil, errors.New("eas: SyncContacts: folderID is required")
 	}
@@ -110,17 +110,17 @@ func (c *Client) SyncContacts(ctx context.Context, folderID string) (*ContactsSy
 }
 
 // CreateContact adds a new contact.
-func (c *Client) CreateContact(ctx context.Context, folderID string, draft ContactDraft) (string, error) {
+func (c *httpClient) CreateContact(ctx context.Context, folderID string, draft ContactDraft) (string, error) {
 	return c.addItemViaSync(ctx, folderID, buildContactApp(draft))
 }
 
 // UpdateContact modifies an existing contact.
-func (c *Client) UpdateContact(ctx context.Context, folderID, serverID string, draft ContactDraft) error {
+func (c *httpClient) UpdateContact(ctx context.Context, folderID, serverID string, draft ContactDraft) error {
 	return c.changeItemViaSync(ctx, folderID, serverID, buildContactApp(draft))
 }
 
 // DeleteContact removes a contact.
-func (c *Client) DeleteContact(ctx context.Context, folderID, serverID string) error {
+func (c *httpClient) DeleteContact(ctx context.Context, folderID, serverID string) error {
 	return c.deleteItemViaSync(ctx, folderID, serverID)
 }
 
@@ -306,7 +306,7 @@ func buildContactApp(d ContactDraft) *wbxml.Element {
 
 // addItemViaSync sends an Add command via Sync and returns the
 // server-assigned ServerID.
-func (c *Client) addItemViaSync(ctx context.Context, folderID string, app *wbxml.Element) (string, error) {
+func (c *httpClient) addItemViaSync(ctx context.Context, folderID string, app *wbxml.Element) (string, error) {
 	if folderID == "" {
 		return "", errors.New("eas: addItemViaSync: folderID is required")
 	}
@@ -342,7 +342,7 @@ func (c *Client) addItemViaSync(ctx context.Context, folderID string, app *wbxml
 	return clientID, nil
 }
 
-func (c *Client) changeItemViaSync(ctx context.Context, folderID, serverID string, app *wbxml.Element) error {
+func (c *httpClient) changeItemViaSync(ctx context.Context, folderID, serverID string, app *wbxml.Element) error {
 	if folderID == "" || serverID == "" {
 		return errors.New("eas: changeItemViaSync: folderID and serverID are required")
 	}
@@ -356,7 +356,7 @@ func (c *Client) changeItemViaSync(ctx context.Context, folderID, serverID strin
 	return err
 }
 
-func (c *Client) deleteItemViaSync(ctx context.Context, folderID, serverID string) error {
+func (c *httpClient) deleteItemViaSync(ctx context.Context, folderID, serverID string) error {
 	if folderID == "" || serverID == "" {
 		return errors.New("eas: deleteItemViaSync: folderID and serverID are required")
 	}
@@ -375,7 +375,7 @@ func (c *Client) deleteItemViaSync(ctx context.Context, folderID, serverID strin
 // (e.g. another device on the same account rotated state) made every
 // CreateEvent / UpdateContact / DeleteTask hard-fail until the caller
 // manually reset and re-bootstrapped.
-func (c *Client) sendSyncCommandsWithReset(ctx context.Context, folderID string, cmds *wbxml.Element) (*wbxml.Element, error) {
+func (c *httpClient) sendSyncCommandsWithReset(ctx context.Context, folderID string, cmds *wbxml.Element) (*wbxml.Element, error) {
 	if err := c.ensureSynced(ctx, folderID); err != nil {
 		return nil, err
 	}
@@ -395,7 +395,7 @@ func (c *Client) sendSyncCommandsWithReset(ctx context.Context, folderID string,
 // genericSyncFolder issues a Sync request for a non-email folder class
 // and dispatches each Add/Change to the per-class parser. Returns the
 // SyncKey, more-available flag, and parsed items.
-func (c *Client) genericSyncFolder(
+func (c *httpClient) genericSyncFolder(
 	ctx context.Context,
 	folderID string,
 	parseAdd func(serverID string, app *wbxml.Element),

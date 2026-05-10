@@ -80,6 +80,14 @@ will resent any drift.
 9. **Don't break the public API on patch releases.** SemVer applies.
    Renaming an exported symbol or changing a function signature is a
    minor (pre-1.0) or major (post-1.0) bump.
+10. **The library API is interface-first.** `eas.Client` is the
+    umbrella interface; sub-interfaces (`EmailClient`, `CalendarClient`,
+    …) live in `eas/interfaces.go`. New commands add a method to the
+    appropriate sub-interface, implement it on the unexported
+    `*httpClient` concrete in `eas/`, and add a corresponding `Func`
+    field + stub method to the matching mock in `eas/easmock/`. The
+    compile-time `var _ eas.X = (*X)(nil)` line in each easmock file
+    catches drift if you forget the mock side.
 
 ## Coding style
 

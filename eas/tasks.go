@@ -41,7 +41,7 @@ type TasksSyncResult struct {
 }
 
 // SyncTasks fetches a tasks folder.
-func (c *Client) SyncTasks(ctx context.Context, folderID string) (*TasksSyncResult, error) {
+func (c *httpClient) SyncTasks(ctx context.Context, folderID string) (*TasksSyncResult, error) {
 	if folderID == "" {
 		return nil, errors.New("eas: SyncTasks: folderID is required")
 	}
@@ -66,17 +66,17 @@ func (c *Client) SyncTasks(ctx context.Context, folderID string) (*TasksSyncResu
 }
 
 // CreateTask creates a new task.
-func (c *Client) CreateTask(ctx context.Context, folderID string, draft TaskDraft) (string, error) {
+func (c *httpClient) CreateTask(ctx context.Context, folderID string, draft TaskDraft) (string, error) {
 	return c.addItemViaSync(ctx, folderID, buildTaskApp(draft))
 }
 
 // UpdateTask modifies an existing task.
-func (c *Client) UpdateTask(ctx context.Context, folderID, serverID string, draft TaskDraft) error {
+func (c *httpClient) UpdateTask(ctx context.Context, folderID, serverID string, draft TaskDraft) error {
 	return c.changeItemViaSync(ctx, folderID, serverID, buildTaskApp(draft))
 }
 
 // CompleteTask marks a task complete.
-func (c *Client) CompleteTask(ctx context.Context, folderID, serverID string) error {
+func (c *httpClient) CompleteTask(ctx context.Context, folderID, serverID string) error {
 	app := wbxml.E(wbxml.PageAirSync, "ApplicationData",
 		wbxml.E(wbxml.PageTasks, "Complete", wbxml.Text("1")),
 		wbxml.E(wbxml.PageTasks, "DateCompleted", wbxml.Text(formatEASTime(time.Now().UTC()))),
@@ -85,7 +85,7 @@ func (c *Client) CompleteTask(ctx context.Context, folderID, serverID string) er
 }
 
 // DeleteTask removes a task.
-func (c *Client) DeleteTask(ctx context.Context, folderID, serverID string) error {
+func (c *httpClient) DeleteTask(ctx context.Context, folderID, serverID string) error {
 	return c.deleteItemViaSync(ctx, folderID, serverID)
 }
 

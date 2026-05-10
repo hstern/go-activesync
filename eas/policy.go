@@ -198,7 +198,7 @@ func parsePolicy(doc *wbxml.Element) *Policy {
 // The Policy is populated by Provision after a successful handshake.
 // It is read-only; callers should treat the returned pointer as a
 // snapshot.
-func (c *Client) LastPolicy() *Policy {
+func (c *httpClient) LastPolicy() *Policy {
 	c.policyMu.Lock()
 	defer c.policyMu.Unlock()
 	return c.lastPolicy

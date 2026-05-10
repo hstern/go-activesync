@@ -113,7 +113,7 @@ type FolderSyncResult struct {
 // returns InvalidSyncKey (status 3), FolderSync resets the persisted key
 // to "0" and retries once — this is the canonical recovery for a
 // server-side state reset.
-func (c *Client) FolderSync(ctx context.Context) (*FolderSyncResult, error) {
+func (c *httpClient) FolderSync(ctx context.Context) (*FolderSyncResult, error) {
 	res, err := c.foldersyncOnce(ctx)
 	if err != nil && IsStatusCode(err, StatusInvalidSyncKey) {
 		// Reset and retry.
@@ -125,7 +125,7 @@ func (c *Client) FolderSync(ctx context.Context) (*FolderSyncResult, error) {
 	return res, err
 }
 
-func (c *Client) foldersyncOnce(ctx context.Context) (*FolderSyncResult, error) {
+func (c *httpClient) foldersyncOnce(ctx context.Context) (*FolderSyncResult, error) {
 	key, err := c.cfg.State.SyncKey(ctx, FolderRootID)
 	if err != nil {
 		return nil, fmt.Errorf("eas: FolderSync: read sync key: %w", err)

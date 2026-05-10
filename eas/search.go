@@ -44,7 +44,7 @@ type EmailSearchResult struct {
 //
 // EAS Search is a server-side full-text query; it does not require a
 // SyncKey and does not advance per-folder Sync state.
-func (c *Client) SearchEmail(ctx context.Context, query string, opts EmailSearchOptions) (*EmailSearchResult, error) {
+func (c *httpClient) SearchEmail(ctx context.Context, query string, opts EmailSearchOptions) (*EmailSearchResult, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, errors.New("eas: SearchEmail: query is required")
 	}
@@ -103,7 +103,7 @@ func (c *Client) SearchEmail(ctx context.Context, query string, opts EmailSearch
 // searchStructured is SearchEmail with a caller-provided Query AST
 // instead of the (And Class=Email + CollectionId? + FreeText) tree
 // SearchEmail builds.
-func (c *Client) searchStructured(ctx context.Context, q Query, opts EmailSearchOptions) (*EmailSearchResult, error) {
+func (c *httpClient) searchStructured(ctx context.Context, q Query, opts EmailSearchOptions) (*EmailSearchResult, error) {
 	if q == nil {
 		return nil, errors.New("eas: SearchEmailQuery: query is required")
 	}
@@ -143,7 +143,7 @@ func (c *Client) searchStructured(ctx context.Context, q Query, opts EmailSearch
 
 // runSearch issues the Search request built by SearchEmail or
 // searchStructured and parses the result.
-func (c *Client) runSearch(ctx context.Context, doc *wbxml.Document, opts EmailSearchOptions) (*EmailSearchResult, error) {
+func (c *httpClient) runSearch(ctx context.Context, doc *wbxml.Document, opts EmailSearchOptions) (*EmailSearchResult, error) {
 	_ = opts // reserved for future per-call tuning
 	resp, err := c.post(ctx, "Search", doc)
 	if err != nil {

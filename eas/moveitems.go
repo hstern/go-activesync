@@ -19,7 +19,7 @@ type MoveItemResult struct {
 
 // MoveItems moves one or more items from srcFolder to dstFolder.
 // Returns a per-item result list parallel to the input ids.
-func (c *Client) MoveItems(ctx context.Context, srcFolder, dstFolder string, ids []string) ([]MoveItemResult, error) {
+func (c *httpClient) MoveItems(ctx context.Context, srcFolder, dstFolder string, ids []string) ([]MoveItemResult, error) {
 	if srcFolder == "" || dstFolder == "" {
 		return nil, errors.New("eas: MoveItems: srcFolder and dstFolder are required")
 	}

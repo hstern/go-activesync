@@ -213,6 +213,42 @@ live EAS server you point it at via env vars; see the
 and the [integration test file](integration_test.go) for runnable
 examples of every major command.
 
+### Testing your own code that depends on `eas`
+
+`eas.Client` is an interface. The
+[`easmock`](https://pkg.go.dev/github.com/hstern/go-activesync/eas/easmock)
+subpackage provides hand-written test doubles — one struct per
+interface, with a `*Func` field per method. Configure only the fields
+your test cares about; unconfigured methods return a sentinel error
+so misbehaving code paths surface loudly.
+
+```go
+import (
+    "context"
+    "testing"
+
+    "github.com/hstern/go-activesync/eas"
+    "github.com/hstern/go-activesync/eas/easmock"
+)
+
+func TestInboxSummary(t *testing.T) {
+    var c eas.Client = &easmock.Client{
+        EmailClient: easmock.EmailClient{
+            SyncEmailFunc: func(_ context.Context, _ string, _ eas.EmailSyncOptions) (*eas.EmailSyncResult, error) {
+                return &eas.EmailSyncResult{
+                    Added: []eas.EmailItem{{Subject: "hi"}},
+                }, nil
+            },
+        },
+    }
+    // ... pass c to your code under test ...
+}
+```
+
+Sub-interfaces (`EmailClient`, `CalendarClient`, …) compose into the
+umbrella `Client`; consumers can depend on a slim view if they only
+touch one feature area.
+
 ## See also
 
 - [Repo root README](../README.md) — module-level overview, badges, license

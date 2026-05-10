@@ -45,7 +45,7 @@ func pimSyncResponse(folderID, syncKey string, adds ...*wbxml.Element) []byte {
 //
 // The returned **[]byte holds the second call's request body so tests
 // can assert on what the client emitted.
-func twoCallSyncServer(t *testing.T, folderID, syncKey, serverID string) (*Client, **[]byte) {
+func twoCallSyncServer(t *testing.T, folderID, syncKey, serverID string) (*httpClient, **[]byte) {
 	t.Helper()
 	var calls int
 	bodyHolder := new([]byte)
@@ -137,7 +137,7 @@ func (e *errStateStore) SetSyncKey(ctx context.Context, folderID, key string) er
 // response and stashes the request body. The client's per-folder sync
 // key is pre-populated so the helper bootstrap path is skipped — tests
 // see exactly the change/delete the caller emits.
-func singleCallSyncServer(t *testing.T, folderID string) (*Client, *[]byte) {
+func singleCallSyncServer(t *testing.T, folderID string) (*httpClient, *[]byte) {
 	t.Helper()
 	var lastBody []byte
 	c, _, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {

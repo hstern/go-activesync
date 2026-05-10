@@ -29,7 +29,7 @@ import (
 //
 // Provision is safe to call repeatedly; idempotent re-provisioning is the
 // recommended response to a 449 status from any other command.
-func (c *Client) Provision(ctx context.Context) error {
+func (c *httpClient) Provision(ctx context.Context) error {
 	// Phase 1: initial request, PolicyKey "0" means "I have no key yet".
 	tempKey, policyType, err := c.provisionPhase(ctx, "0", false)
 	if err != nil {
@@ -66,7 +66,7 @@ func (c *Client) Provision(ctx context.Context) error {
 // Returns the policy key and policy type from the response. The caller
 // distinguishes phase 1 (key is temporary, needs ack) from phase 2 (key
 // is final).
-func (c *Client) provisionPhase(ctx context.Context, key string, ack bool) (string, string, error) {
+func (c *httpClient) provisionPhase(ctx context.Context, key string, ack bool) (string, string, error) {
 	const policyType = "MS-EAS-Provisioning-WBXML"
 
 	policy := wbxml.E(wbxml.PageProvision, "Policy",
@@ -159,7 +159,7 @@ func RemoteWipeRequested(provisionResp *wbxml.Document) bool {
 // perform first is application-level: deleting per-account persistent
 // state (sync keys, cached credentials, attachment caches, etc.)
 // before acknowledging the wipe.
-func (c *Client) AcknowledgeRemoteWipe(ctx context.Context, status int) error {
+func (c *httpClient) AcknowledgeRemoteWipe(ctx context.Context, status int) error {
 	if status == 0 {
 		status = 1 // assume success if unspecified
 	}

@@ -24,7 +24,7 @@ type CertValidation struct {
 //
 // chain is an optional list of intermediate CAs (DER-encoded). checkCRL
 // requests an explicit revocation check.
-func (c *Client) ValidateCert(ctx context.Context, certs [][]byte, chain [][]byte, checkCRL bool) ([]CertValidation, error) {
+func (c *httpClient) ValidateCert(ctx context.Context, certs [][]byte, chain [][]byte, checkCRL bool) ([]CertValidation, error) {
 	if len(certs) == 0 {
 		return nil, errors.New("eas: ValidateCert: at least one certificate required")
 	}

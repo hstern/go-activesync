@@ -25,7 +25,7 @@ type ItemEstimate struct {
 // folderIDs is the list of collections to query. The client must have
 // a prior SyncKey for each (use ensureSynced or call SyncEmail/Calendar
 // first to bootstrap).
-func (c *Client) GetItemEstimate(ctx context.Context, folderIDs []string) ([]ItemEstimate, error) {
+func (c *httpClient) GetItemEstimate(ctx context.Context, folderIDs []string) ([]ItemEstimate, error) {
 	if len(folderIDs) == 0 {
 		return nil, errors.New("eas: GetItemEstimate: at least one folderID required")
 	}

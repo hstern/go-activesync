@@ -4,6 +4,65 @@ All notable changes to this project are documented here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely
 and the project follows [Semantic Versioning](https://semver.org/).
 
+## [v1.0.0] — 2026-05-10
+
+**Breaking change.** The library API is now interface-first. Every
+public surface of `eas` is reachable through interfaces, the concrete
+client struct is unexported, and a new `eas/easmock` subpackage
+provides hand-written test doubles so consumers can unit-test their
+EAS-touching code without standing up an `httptest.Server`.
+
+### Breaking
+
+- `eas.Client` is now an interface, not a struct. It composes ten
+  feature-area sub-interfaces — `EmailClient`, `CalendarClient`,
+  `ContactsClient`, `TasksClient`, `NotesClient`, `FolderClient`,
+  `SettingsClient`, `SearchClient`, `ProvisionClient`, `PingClient` —
+  plus a `LastPolicy()` method.
+- `eas.NewClient(cfg)` returns the `Client` interface; the underlying
+  concrete type is unexported.
+- Method signatures are unchanged. The existing 52 exported methods
+  are now interface methods on `Client`.
+
+### Migration
+
+For most callers the change is a one-liner:
+
+```go
+// before:
+var c *eas.Client
+c, err = eas.NewClient(cfg)
+
+// after:
+var c eas.Client
+c, err = eas.NewClient(cfg)
+```
+
+Type inference (`c, err := eas.NewClient(cfg)`) keeps working without
+changes. Callers that embedded `*eas.Client` in their own types or
+reached for unexported fields will need to switch to the interface;
+the test-double path covers the most common reason callers reached for
+the concrete (mocking).
+
+### Added
+
+- `eas/easmock` subpackage with one struct per `eas` interface and
+  func-typed fields callers override. Methods whose `Func` is nil
+  return a sentinel error, so misbehaving code paths surface loudly
+  rather than silently calling a no-op. `easmock.Client` is the
+  umbrella mock for the full `eas.Client` interface.
+- `eas/interfaces.go` collects the type-level surface in one file for
+  reading.
+
+### Internal
+
+- The concrete client lives at `httpClient` (unexported).
+- `AGENTS.md` adds a hard rule: new commands extend the appropriate
+  sub-interface plus the matching `easmock` mock; the compile-time
+  conformance assertion in each easmock file catches drift.
+- Architecture diagram (`diagrams/architecture.svg`) updated to show
+  `eas.Client` as an interface and `easmock` as a satisfying box.
+
 ## [v0.2.1] — 2026-05-10
 
 No library changes since v0.2.0 — the `eas/` and `wbxml/` public API
@@ -87,6 +146,7 @@ mTLS), and the WBXML codec the spec is built on.
 
 Tested against Z-Push 2.7.6 + Dovecot via the bundled testenv stack.
 
+[v1.0.0]: https://github.com/hstern/go-activesync/releases/tag/v1.0.0
 [v0.2.1]: https://github.com/hstern/go-activesync/releases/tag/v0.2.1
 [v0.2.0]: https://github.com/hstern/go-activesync/releases/tag/v0.2.0
 [v0.1.0]: https://github.com/hstern/go-activesync/releases/tag/v0.1.0

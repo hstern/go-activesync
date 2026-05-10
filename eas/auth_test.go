@@ -153,7 +153,7 @@ func TestRetryOn401_disabledByDefault(t *testing.T) {
 
 // newAuthHeaderCapturingClient builds a Client whose handler stores the
 // most-recent Authorization header in *seen.
-func newAuthHeaderCapturingClient(t *testing.T, seen *string) *Client {
+func newAuthHeaderCapturingClient(t *testing.T, seen *string) *httpClient {
 	t.Helper()
 	c, _, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		*seen = r.Header.Get("Authorization")

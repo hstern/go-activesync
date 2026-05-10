@@ -41,7 +41,7 @@ type EmailChangeResult struct {
 // commands for the given folder. It bootstraps the folder if needed
 // (if no SyncKey has been persisted yet) and retries once on
 // InvalidSyncKey by resetting the local key.
-func (c *Client) ApplyEmailChanges(ctx context.Context, folderID string, changes []EmailChange) ([]EmailChangeResult, error) {
+func (c *httpClient) ApplyEmailChanges(ctx context.Context, folderID string, changes []EmailChange) ([]EmailChangeResult, error) {
 	if folderID == "" {
 		return nil, errors.New("eas: ApplyEmailChanges: folderID is required")
 	}
@@ -67,7 +67,7 @@ func (c *Client) ApplyEmailChanges(ctx context.Context, folderID string, changes
 
 // ensureSynced makes sure the folder has a non-zero SyncKey, performing
 // a single bootstrap Sync (key=0 → new key) if needed.
-func (c *Client) ensureSynced(ctx context.Context, folderID string) error {
+func (c *httpClient) ensureSynced(ctx context.Context, folderID string) error {
 	key, err := c.cfg.State.SyncKey(ctx, folderID)
 	if err != nil {
 		return fmt.Errorf("eas: read sync key: %w", err)
@@ -83,7 +83,7 @@ func (c *Client) ensureSynced(ctx context.Context, folderID string) error {
 	return nil
 }
 
-func (c *Client) applyChangesOnce(ctx context.Context, folderID string, changes []EmailChange) ([]EmailChangeResult, error) {
+func (c *httpClient) applyChangesOnce(ctx context.Context, folderID string, changes []EmailChange) ([]EmailChangeResult, error) {
 	key, err := c.cfg.State.SyncKey(ctx, folderID)
 	if err != nil {
 		return nil, fmt.Errorf("eas: read sync key: %w", err)

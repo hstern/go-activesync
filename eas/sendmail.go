@@ -41,7 +41,7 @@ type ReplyForwardOptions struct {
 
 // SendMail sends a new RFC 5322 message via the EAS SendMail command.
 // Returns nil on success.
-func (c *Client) SendMail(ctx context.Context, opts SendMailOptions) error {
+func (c *httpClient) SendMail(ctx context.Context, opts SendMailOptions) error {
 	if len(opts.MIME) == 0 {
 		return errors.New("eas: SendMail: MIME is required")
 	}
@@ -64,17 +64,17 @@ func (c *Client) SendMail(ctx context.Context, opts SendMailOptions) error {
 
 // SmartReply sends a reply that the server merges with the original
 // message (preserving threading and headers it already has).
-func (c *Client) SmartReply(ctx context.Context, opts ReplyForwardOptions) error {
+func (c *httpClient) SmartReply(ctx context.Context, opts ReplyForwardOptions) error {
 	return c.smartReplyOrForward(ctx, "SmartReply", opts)
 }
 
 // SmartForward forwards a message; like SmartReply, the server expands
 // the original headers/body so the client only sends the new content.
-func (c *Client) SmartForward(ctx context.Context, opts ReplyForwardOptions) error {
+func (c *httpClient) SmartForward(ctx context.Context, opts ReplyForwardOptions) error {
 	return c.smartReplyOrForward(ctx, "SmartForward", opts)
 }
 
-func (c *Client) smartReplyOrForward(ctx context.Context, cmd string, opts ReplyForwardOptions) error {
+func (c *httpClient) smartReplyOrForward(ctx context.Context, cmd string, opts ReplyForwardOptions) error {
 	if len(opts.MIME) == 0 {
 		return fmt.Errorf("eas: %s: MIME is required", cmd)
 	}
@@ -103,7 +103,7 @@ func (c *Client) smartReplyOrForward(ctx context.Context, cmd string, opts Reply
 // sendMailLike POSTs a SendMail-shaped command. EAS reports success
 // either as an empty 200 OK body or as a Status=1 element. Anything
 // else is surfaced.
-func (c *Client) sendMailLike(ctx context.Context, cmd string, doc *wbxml.Document) error {
+func (c *httpClient) sendMailLike(ctx context.Context, cmd string, doc *wbxml.Document) error {
 	resp, err := c.post(ctx, cmd, doc)
 	if err != nil {
 		return err

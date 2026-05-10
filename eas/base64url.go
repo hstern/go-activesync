@@ -118,7 +118,7 @@ func encodeVersion(s string) byte {
 
 // applyB64ToURL replaces the standard query string in u with a single
 // base64-encoded query value when Base64URL is enabled.
-func (c *Client) applyB64ToURL(cmd, plainURL string) (string, error) {
+func (c *httpClient) applyB64ToURL(cmd, plainURL string) (string, error) {
 	pk, err := c.cfg.State.PolicyKey(context.Background())
 	if err != nil {
 		return "", err

@@ -38,7 +38,7 @@ type DeviceInformation struct {
 //
 // Returns nil on Status=1, a *StatusError on any other status, or an
 // underlying transport error.
-func (c *Client) SettingsDeviceInformation(ctx context.Context, info DeviceInformation) error {
+func (c *httpClient) SettingsDeviceInformation(ctx context.Context, info DeviceInformation) error {
 	set := wbxml.E(wbxml.PageSettings, "Set")
 	add := func(name, val string) {
 		if val == "" {

@@ -15,7 +15,7 @@ import (
 // itself is preserved.
 //
 // Useful for "empty trash" workflows.
-func (c *Client) EmptyFolderContents(ctx context.Context, folderID string, deleteSubfolders bool) error {
+func (c *httpClient) EmptyFolderContents(ctx context.Context, folderID string, deleteSubfolders bool) error {
 	if folderID == "" {
 		return errors.New("eas: EmptyFolderContents: folderID is required")
 	}
@@ -39,7 +39,7 @@ func (c *Client) EmptyFolderContents(ctx context.Context, folderID string, delet
 // MoveViaItemOperations moves a single item using the ItemOperations
 // container (an alternative to MoveItems with extra options like
 // MoveAlways and the resulting destination ConversationId).
-func (c *Client) MoveViaItemOperations(ctx context.Context, srcFolder, srcID, dstFolder string, moveAlways bool) (string, error) {
+func (c *httpClient) MoveViaItemOperations(ctx context.Context, srcFolder, srcID, dstFolder string, moveAlways bool) (string, error) {
 	if srcFolder == "" || srcID == "" || dstFolder == "" {
 		return "", errors.New("eas: MoveViaItemOperations: srcFolder/srcID/dstFolder are required")
 	}
@@ -78,7 +78,7 @@ func (c *Client) MoveViaItemOperations(ctx context.Context, srcFolder, srcID, ds
 // rangeStart and rangeEnd select a byte range within the file (set
 // rangeEnd=0 to fetch from rangeStart to end). The returned data is
 // the file contents.
-func (c *Client) FetchDocumentLibrary(ctx context.Context, linkID string, rangeStart, rangeEnd int64) ([]byte, error) {
+func (c *httpClient) FetchDocumentLibrary(ctx context.Context, linkID string, rangeStart, rangeEnd int64) ([]byte, error) {
 	if linkID == "" {
 		return nil, errors.New("eas: FetchDocumentLibrary: linkID is required")
 	}
@@ -142,7 +142,7 @@ type FetchAttachmentResult struct {
 // FileReference (typically read from EmailItem.Attachments[i].FileReference
 // after a Sync or ItemOperations Fetch). rangeStart/rangeEnd allow
 // resumable transfers; pass 0/0 for the full attachment.
-func (c *Client) FetchAttachment(ctx context.Context, fileReference string, rangeStart, rangeEnd int64) (*FetchAttachmentResult, error) {
+func (c *httpClient) FetchAttachment(ctx context.Context, fileReference string, rangeStart, rangeEnd int64) (*FetchAttachmentResult, error) {
 	if fileReference == "" {
 		return nil, errors.New("eas: FetchAttachment: fileReference is required")
 	}

@@ -37,7 +37,7 @@ type GALSearchResult struct {
 // GALSearch issues a Search command against the GAL store. Useful for
 // directory lookups ("find Alice's email address") without syncing the
 // full corporate address book.
-func (c *Client) GALSearch(ctx context.Context, query string, limit int) (*GALSearchResult, error) {
+func (c *httpClient) GALSearch(ctx context.Context, query string, limit int) (*GALSearchResult, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, errors.New("eas: GALSearch: query is required")
 	}

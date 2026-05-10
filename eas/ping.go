@@ -37,7 +37,7 @@ type PingResult struct {
 // up to heartbeatSeconds before returning. The caller is responsible for
 // scheduling the next Ping after this one returns; use a heartbeat of
 // 60-470 seconds (the typical server cap is ~470).
-func (c *Client) Ping(ctx context.Context, heartbeatSeconds int, folders []PingFolder) (*PingResult, error) {
+func (c *httpClient) Ping(ctx context.Context, heartbeatSeconds int, folders []PingFolder) (*PingResult, error) {
 	if len(folders) == 0 {
 		return nil, errors.New("eas: Ping: at least one folder required")
 	}

@@ -104,7 +104,7 @@ type CalendarSyncResult struct {
 
 // SyncCalendar issues a Sync command for a calendar folder and parses
 // EventItems from the response.
-func (c *Client) SyncCalendar(ctx context.Context, folderID string, opts CalendarSyncOptions) (*CalendarSyncResult, error) {
+func (c *httpClient) SyncCalendar(ctx context.Context, folderID string, opts CalendarSyncOptions) (*CalendarSyncResult, error) {
 	if folderID == "" {
 		return nil, errors.New("eas: SyncCalendar: folderID is required")
 	}
@@ -137,7 +137,7 @@ func (c *Client) SyncCalendar(ctx context.Context, folderID string, opts Calenda
 	return res, nil
 }
 
-func (c *Client) syncCalendarOnce(ctx context.Context, folderID string, opts CalendarSyncOptions) (*CalendarSyncResult, error) {
+func (c *httpClient) syncCalendarOnce(ctx context.Context, folderID string, opts CalendarSyncOptions) (*CalendarSyncResult, error) {
 	key, err := c.cfg.State.SyncKey(ctx, folderID)
 	if err != nil {
 		return nil, fmt.Errorf("eas: SyncCalendar: read key: %w", err)
@@ -321,7 +321,7 @@ func parseEventBody(out *EventItem, body *wbxml.Element) {
 // CreateEvent adds a new calendar event via Sync. Returns the
 // server-assigned ServerID (or the temporary client id if the server
 // didn't echo a new one).
-func (c *Client) CreateEvent(ctx context.Context, folderID string, draft EventDraft) (string, error) {
+func (c *httpClient) CreateEvent(ctx context.Context, folderID string, draft EventDraft) (string, error) {
 	if folderID == "" {
 		return "", errors.New("eas: CreateEvent: folderID is required")
 	}
@@ -364,7 +364,7 @@ func (c *Client) CreateEvent(ctx context.Context, folderID string, draft EventDr
 
 // UpdateEvent modifies an existing event identified by serverID. Only the
 // non-zero fields of draft are sent.
-func (c *Client) UpdateEvent(ctx context.Context, folderID, serverID string, draft EventDraft) error {
+func (c *httpClient) UpdateEvent(ctx context.Context, folderID, serverID string, draft EventDraft) error {
 	if folderID == "" || serverID == "" {
 		return errors.New("eas: UpdateEvent: folderID and serverID are required")
 	}
@@ -383,7 +383,7 @@ func (c *Client) UpdateEvent(ctx context.Context, folderID, serverID string, dra
 }
 
 // DeleteEvent removes an event identified by serverID.
-func (c *Client) DeleteEvent(ctx context.Context, folderID, serverID string) error {
+func (c *httpClient) DeleteEvent(ctx context.Context, folderID, serverID string) error {
 	if folderID == "" || serverID == "" {
 		return errors.New("eas: DeleteEvent: folderID and serverID are required")
 	}
@@ -401,7 +401,7 @@ func (c *Client) DeleteEvent(ctx context.Context, folderID, serverID string) err
 
 // sendSyncCommands wraps a Commands subtree in a Sync request, sends it,
 // updates the persisted SyncKey, and returns the response root.
-func (c *Client) sendSyncCommands(ctx context.Context, folderID string, cmds *wbxml.Element) (*wbxml.Element, error) {
+func (c *httpClient) sendSyncCommands(ctx context.Context, folderID string, cmds *wbxml.Element) (*wbxml.Element, error) {
 	key, err := c.cfg.State.SyncKey(ctx, folderID)
 	if err != nil {
 		return nil, fmt.Errorf("eas: sendSyncCommands: read key: %w", err)

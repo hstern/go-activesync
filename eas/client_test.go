@@ -40,7 +40,7 @@ func (c *captured) record(r *http.Request) {
 
 // newTestClient spins up an httptest.Server and a Client targeting it.
 // The handler is the caller's; cap captures the last request.
-func newTestClient(t *testing.T, handler http.HandlerFunc) (*Client, *captured, *httptest.Server) {
+func newTestClient(t *testing.T, handler http.HandlerFunc) (*httpClient, *captured, *httptest.Server) {
 	t.Helper()
 	cap := &captured{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -58,7 +58,7 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) (*Client, *captured, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	return c, cap, srv
+	return c.(*httpClient), cap, srv
 }
 
 func TestNewClient_validation(t *testing.T) {
@@ -93,16 +93,17 @@ func TestNewClient_defaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.cfg.DeviceType != "GoActiveSync" {
-		t.Errorf("DeviceType: %q", c.cfg.DeviceType)
+	hc := c.(*httpClient)
+	if hc.cfg.DeviceType != "GoActiveSync" {
+		t.Errorf("DeviceType: %q", hc.cfg.DeviceType)
 	}
-	if c.cfg.ASVersion != "14.1" {
-		t.Errorf("ASVersion: %q", c.cfg.ASVersion)
+	if hc.cfg.ASVersion != "14.1" {
+		t.Errorf("ASVersion: %q", hc.cfg.ASVersion)
 	}
-	if c.cfg.UserAgent == "" {
+	if hc.cfg.UserAgent == "" {
 		t.Error("UserAgent unset")
 	}
-	if c.cfg.Registry == nil {
+	if hc.cfg.Registry == nil {
 		t.Error("Registry unset")
 	}
 }
