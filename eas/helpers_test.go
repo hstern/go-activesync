@@ -98,11 +98,11 @@ func (e errSentinel) Error() string { return string(e) }
 // a chosen method. Tests use it to exercise the "state lookup failed"
 // branches without needing a stub implementation per call site.
 type errStateStore struct {
-	inner          StateStore
-	policyKeyErr   error
-	syncKeyErr     error
-	setPolicyErr   error
-	setSyncKeyErr  error
+	inner         StateStore
+	policyKeyErr  error
+	syncKeyErr    error
+	setPolicyErr  error
+	setSyncKeyErr error
 }
 
 func (e *errStateStore) PolicyKey(ctx context.Context) (string, error) {

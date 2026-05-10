@@ -242,7 +242,7 @@ func TestUnmarshal_TruncatedStrI(t *testing.T) {
 	// STR_I starts but is never NUL-terminated before EOF.
 	in := []byte{
 		0x03, 0x01, 0x6A, 0x00,
-		0x4C,       // ClientId (id 0x0C) | content, on AirSync
+		0x4C,      // ClientId (id 0x0C) | content, on AirSync
 		0x03, 'a', // STR_I, body 'a', no NUL, no END
 	}
 	if _, err := Unmarshal(in, DefaultRegistry()); err == nil {

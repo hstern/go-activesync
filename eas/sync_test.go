@@ -6,6 +6,7 @@ package eas
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 
@@ -283,6 +284,189 @@ func TestSyncEmail_advancedOptionsEmitted(t *testing.T) {
 	}
 	if bpp := req.Root.Find("BodyPartPreference"); bpp == nil {
 		t.Error("BodyPartPreference missing")
+	}
+}
+
+func TestSyncEmail_emitsWaitMinutes(t *testing.T) {
+	c, cap, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(syncResponse("S2", false))
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "inbox", "S1")
+	_, _ = c.SyncEmail(context.Background(), "inbox", EmailSyncOptions{
+		NoBootstrap: true,
+		WaitMinutes: 10,
+	})
+	req, _ := wbxml.Unmarshal(cap.body, wbxml.DefaultRegistry())
+	if w := req.Root.Find("Wait"); w == nil || w.TextContent() != "10" {
+		t.Errorf("Wait = %v", w)
+	}
+}
+
+func TestSyncEmail_emitsHeartbeat(t *testing.T) {
+	c, cap, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(syncResponse("S2", false))
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "inbox", "S1")
+	_, _ = c.SyncEmail(context.Background(), "inbox", EmailSyncOptions{
+		NoBootstrap:      true,
+		HeartbeatSeconds: 300,
+	})
+	req, _ := wbxml.Unmarshal(cap.body, wbxml.DefaultRegistry())
+	if h := req.Root.Find("HeartbeatInterval"); h == nil || h.TextContent() != "300" {
+		t.Errorf("HeartbeatInterval = %v", h)
+	}
+}
+
+func TestSyncEmail_syncKeyReadError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be reached")
+	})
+	c.cfg.State = &errStateStore{inner: NewMemoryState(), syncKeyErr: errSentinel("read fail")}
+	if _, err := c.SyncEmail(context.Background(), "inbox", EmailSyncOptions{NoBootstrap: true}); err == nil {
+		t.Error("want error from SyncKey read")
+	}
+}
+
+func TestSyncEmail_emptyResponseTreatedAsNoChanges(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200) // empty body
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "inbox", "PRIOR")
+	res, err := c.SyncEmail(context.Background(), "inbox", EmailSyncOptions{NoBootstrap: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.SyncKey != "PRIOR" {
+		t.Errorf("expected old key carried through; got %q", res.SyncKey)
+	}
+}
+
+func TestSyncEmail_topLevelStatusError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageAirSync, "Sync",
+				wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("8")),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "inbox", "S1")
+	_, err := c.SyncEmail(context.Background(), "inbox", EmailSyncOptions{NoBootstrap: true})
+	if !IsStatusCode(err, 8) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestSyncEmail_missingCollectionRejected(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageAirSync, "Sync",
+				wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("1")),
+				// no <Collection>
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "inbox", "S1")
+	_, err := c.SyncEmail(context.Background(), "inbox", EmailSyncOptions{NoBootstrap: true})
+	if err == nil || !strings.Contains(err.Error(), "<Collection>") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestSyncEmail_skipsNonElementCommands(t *testing.T) {
+	// Stray text inside <Commands> is skipped without affecting parse.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageAirSync, "Sync",
+				wbxml.E(wbxml.PageAirSync, "Collections",
+					wbxml.E(wbxml.PageAirSync, "Collection",
+						wbxml.E(wbxml.PageAirSync, "SyncKey", wbxml.Text("S2")),
+						wbxml.E(wbxml.PageAirSync, "CollectionId", wbxml.Text("inbox")),
+						wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("1")),
+						wbxml.E(wbxml.PageAirSync, "Commands",
+							wbxml.Text("stray"),
+							wbxml.E(wbxml.PageAirSync, "Add",
+								wbxml.E(wbxml.PageAirSync, "ServerId", wbxml.Text("1")),
+								wbxml.E(wbxml.PageAirSync, "ApplicationData",
+									wbxml.E(wbxml.PageEmail, "Subject", wbxml.Text("Hi")),
+								),
+							),
+						),
+					),
+				),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "inbox", "S1")
+	res, err := c.SyncEmail(context.Background(), "inbox", EmailSyncOptions{NoBootstrap: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Added) != 1 || res.Added[0].Subject != "Hi" {
+		t.Errorf("added = %+v", res.Added)
+	}
+}
+
+func TestSyncEmail_missingSyncKeyRejected(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageAirSync, "Sync",
+				wbxml.E(wbxml.PageAirSync, "Collections",
+					wbxml.E(wbxml.PageAirSync, "Collection",
+						wbxml.E(wbxml.PageAirSync, "CollectionId", wbxml.Text("inbox")),
+						wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("1")),
+						// no <SyncKey>
+					),
+				),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "inbox", "S1")
+	_, err := c.SyncEmail(context.Background(), "inbox", EmailSyncOptions{NoBootstrap: true})
+	if err == nil || !strings.Contains(err.Error(), "<SyncKey>") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestSyncEmail_persistKeyError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(syncResponse("S2", false))
+	})
+	es := &errStateStore{inner: NewMemoryState(), setSyncKeyErr: errSentinel("disk full")}
+	c.cfg.State = es
+	if _, err := c.SyncEmail(context.Background(), "inbox", EmailSyncOptions{NoBootstrap: true}); err == nil {
+		t.Error("want error from persist failure")
+	}
+}
+
+func TestSyncEmail_invalidSyncKeyResetFails(t *testing.T) {
+	// The reset SetSyncKey fails after Status=3; the wrapped error should
+	// surface, not the underlying StatusError.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(invalidSyncKeyResponse())
+	})
+	es := &errStateStore{inner: NewMemoryState()}
+	c.cfg.State = es
+	_ = es.inner.SetSyncKey(context.Background(), "inbox", "STALE")
+	es.setSyncKeyErr = errSentinel("ro state")
+	_, err := c.SyncEmail(context.Background(), "inbox", EmailSyncOptions{NoBootstrap: true})
+	if err == nil || !strings.Contains(err.Error(), "reset") {
+		t.Errorf("err = %v", err)
 	}
 }
 

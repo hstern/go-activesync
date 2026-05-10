@@ -285,6 +285,231 @@ func TestApplyEmailChanges_explicitFlagStatus(t *testing.T) {
 	}
 }
 
+func TestApplyEmailChanges_skipsEmptyServerID(t *testing.T) {
+	// One valid change + one with empty ServerID; only the valid one
+	// should hit the wire.
+	c, cap, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(changeAck("S2"))
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "inbox", "S1")
+	_, err := c.ApplyEmailChanges(context.Background(), "inbox", []EmailChange{
+		{ServerID: "", Read: boolp(true)}, // dropped
+		{ServerID: "real", Read: boolp(true)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := wbxml.Unmarshal(cap.body, wbxml.DefaultRegistry())
+	changes := req.Root.FindAll("Change")
+	if len(changes) != 1 {
+		t.Errorf("got %d Change elements, want 1", len(changes))
+	}
+}
+
+func TestApplyEmailChanges_postErrorPropagates(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "inbox", "S1")
+	_, err := c.ApplyEmailChanges(context.Background(), "inbox", []EmailChange{
+		{ServerID: "x", Read: boolp(true)},
+	})
+	if err == nil {
+		t.Error("want HTTP error")
+	}
+}
+
+func TestApplyEmailChanges_emptyResponseIsSuccess(t *testing.T) {
+	// Per MS-ASCMD §2.2.2.20, an empty 200 OK after Sync indicates the
+	// server applied the changes without per-item status. Caller should
+	// see (nil, nil).
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200) // empty body
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "inbox", "S1")
+	res, err := c.ApplyEmailChanges(context.Background(), "inbox", []EmailChange{
+		{ServerID: "x", Read: boolp(true)},
+	})
+	if err != nil {
+		t.Errorf("want no error, got %v", err)
+	}
+	if res != nil {
+		t.Errorf("want nil result, got %+v", res)
+	}
+}
+
+func TestApplyEmailChanges_missingCollectionRejected(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+			wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("1")),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "inbox", "S1")
+	_, err := c.ApplyEmailChanges(context.Background(), "inbox", []EmailChange{
+		{ServerID: "x", Read: boolp(true)},
+	})
+	if err == nil || !strings.Contains(err.Error(), "<Collection>") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestApplyEmailChanges_collectionStatusError(t *testing.T) {
+	// Top-level Status=1 but Collection/Status reports an error.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+			wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("1")),
+			wbxml.E(wbxml.PageAirSync, "Collections",
+				wbxml.E(wbxml.PageAirSync, "Collection",
+					wbxml.E(wbxml.PageAirSync, "SyncKey", wbxml.Text("S2")),
+					wbxml.E(wbxml.PageAirSync, "CollectionId", wbxml.Text("inbox")),
+					wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("8")),
+				),
+			),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "inbox", "S1")
+	_, err := c.ApplyEmailChanges(context.Background(), "inbox", []EmailChange{
+		{ServerID: "x", Read: boolp(true)},
+	})
+	if !IsStatusCode(err, 8) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestApplyEmailChanges_persistKeyError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(changeAck("S2"))
+	})
+	es := &errStateStore{inner: NewMemoryState()}
+	c.cfg.State = es
+	_ = es.inner.SetSyncKey(context.Background(), "inbox", "S1")
+	es.setSyncKeyErr = errSentinel("disk full")
+	_, err := c.ApplyEmailChanges(context.Background(), "inbox", []EmailChange{
+		{ServerID: "x", Read: boolp(true)},
+	})
+	if err == nil || !strings.Contains(err.Error(), "persist") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestApplyEmailChanges_skipsNonElementResponses(t *testing.T) {
+	// Stray text inside <Responses> must not affect parsing.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+			wbxml.E(wbxml.PageAirSync, "Collections",
+				wbxml.E(wbxml.PageAirSync, "Collection",
+					wbxml.E(wbxml.PageAirSync, "SyncKey", wbxml.Text("S2")),
+					wbxml.E(wbxml.PageAirSync, "CollectionId", wbxml.Text("inbox")),
+					wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("1")),
+					wbxml.E(wbxml.PageAirSync, "Responses",
+						wbxml.Text("stray"),
+						wbxml.E(wbxml.PageAirSync, "Change",
+							wbxml.E(wbxml.PageAirSync, "ServerId", wbxml.Text("a")),
+							wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("1")),
+						),
+					),
+				),
+			),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "inbox", "S1")
+	res, err := c.ApplyEmailChanges(context.Background(), "inbox", []EmailChange{
+		{ServerID: "a", Read: boolp(true)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 1 || res[0].ServerID != "a" {
+		t.Errorf("res = %+v", res)
+	}
+}
+
+func TestApplyChangesOnce_syncKeyReadError(t *testing.T) {
+	// applyChangesOnce reads the SyncKey itself; bypass ApplyEmailChanges
+	// so we can fail the read without ensureSynced intercepting first.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be reached")
+	})
+	c.cfg.State = &errStateStore{inner: NewMemoryState(), syncKeyErr: errSentinel("read fail")}
+	_, err := c.applyChangesOnce(context.Background(), "inbox", []EmailChange{
+		{ServerID: "x", Read: boolp(true)},
+	})
+	if err == nil || !strings.Contains(err.Error(), "read sync key") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestApplyEmailChanges_invalidKeyResetThenBootstrapFails(t *testing.T) {
+	// Status=3 → reset OK → re-bootstrap (ensureSynced) fails because the
+	// follow-up Sync is now an HTTP error.
+	calls := 0
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls == 1 {
+			// First applyChangesOnce reply: Status=3.
+			doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+				wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("3")),
+			)}
+			body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+			w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+			w.Write(body)
+			return
+		}
+		// Re-bootstrap call after reset: HTTP error.
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "inbox", "STALE")
+	_, err := c.ApplyEmailChanges(context.Background(), "inbox", []EmailChange{
+		{ServerID: "x", Read: boolp(true)},
+	})
+	if err == nil {
+		t.Error("want error from failed re-bootstrap")
+	}
+}
+
+func TestEnsureSynced_syncKeyReadError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be reached")
+	})
+	c.cfg.State = &errStateStore{inner: NewMemoryState(), syncKeyErr: errSentinel("read fail")}
+	if err := c.ensureSynced(context.Background(), "inbox"); err == nil {
+		t.Error("want error from SyncKey read")
+	}
+}
+
+func TestApplyEmailChanges_invalidKeyResetFails(t *testing.T) {
+	// Status=3 → SetSyncKey reset fails → wrapped error surfaces.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+			wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("3")),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Write(body)
+	})
+	es := &errStateStore{inner: NewMemoryState()}
+	c.cfg.State = es
+	_ = es.inner.SetSyncKey(context.Background(), "inbox", "STALE")
+	es.setSyncKeyErr = errSentinel("ro state")
+	_, err := c.ApplyEmailChanges(context.Background(), "inbox", []EmailChange{
+		{ServerID: "x", Read: boolp(true)},
+	})
+	if err == nil || !strings.Contains(err.Error(), "reset") {
+		t.Errorf("err = %v", err)
+	}
+}
+
 func TestApplyEmailChanges_validation(t *testing.T) {
 	c, _, _ := newTestClient(t, nil)
 	if _, err := c.ApplyEmailChanges(context.Background(), "", []EmailChange{{ServerID: "x"}}); err == nil {

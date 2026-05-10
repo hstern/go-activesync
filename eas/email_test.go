@@ -260,7 +260,7 @@ func TestParseEmailItem_skipsNonElementChildren(t *testing.T) {
 	// must skip non-element children and elements from unrelated codepages
 	// without affecting the fields they recognise.
 	app := wbxml.E(wbxml.PageAirSync, "ApplicationData",
-		wbxml.Text("stray text"), // top-level non-element
+		wbxml.Text("stray text"),                                 // top-level non-element
 		wbxml.E(wbxml.PageAirSync, "Class", wbxml.Text("Email")), // unrelated codepage
 		wbxml.E(wbxml.PageEmail, "Subject", wbxml.Text("S")),
 		wbxml.E(wbxml.PageAirSyncBase, "Body",

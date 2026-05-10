@@ -229,6 +229,107 @@ func TestCapBytes(t *testing.T) {
 	}
 }
 
+func TestPost_marshalError(t *testing.T) {
+	// Custom registry without AirSync; a request that uses AirSync will
+	// fail at Marshal time, so the server is never reached.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be reached when Marshal fails")
+	})
+	c.cfg.Registry = wbxml.NewRegistry() // empty
+	doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync")}
+	if _, err := c.post(context.Background(), "Sync", doc); err == nil ||
+		!strings.Contains(err.Error(), "marshal") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestPost_unmarshalError(t *testing.T) {
+	// Server returns garbage that isn't valid WBXML.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write([]byte{0xFF, 0xFE, 0xFD}) // not a valid WBXML document
+	})
+	doc := &wbxml.Document{Root: wbxml.E(wbxml.PageFolderHierarchy, "FolderSync")}
+	if _, err := c.post(context.Background(), "FolderSync", doc); err == nil ||
+		!strings.Contains(err.Error(), "decode") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestPostRaw_policyKeyReadError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be reached when state read fails")
+	})
+	c.cfg.State = &errStateStore{inner: NewMemoryState(), policyKeyErr: errSentinel("boom")}
+	if _, err := c.postRaw(context.Background(), "FolderSync", []byte("x")); err == nil ||
+		!strings.Contains(err.Error(), "policy key") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestPostRaw_gunzipBadServerStream(t *testing.T) {
+	// Server claims gzip but sends garbage; gunzip should fail.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Write([]byte("not actually gzip"))
+	})
+	if _, err := c.postRaw(context.Background(), "FolderSync", []byte("x")); err == nil ||
+		!strings.Contains(err.Error(), "gunzip") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestPostRaw_449TriggersProvisionRetry(t *testing.T) {
+	// First non-Provision call returns 449. The client should attempt to
+	// re-Provision (which we make fail), and surface the wrapped error.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		// Always 449 — so even the Provision retry sees it (recursion is
+		// guarded by the `cmd != "Provision"` check inside postRaw).
+		http.Error(w, "needs provision", 449)
+	})
+	_, err := c.postRaw(context.Background(), "FolderSync", []byte("x"))
+	if err == nil {
+		t.Fatal("want error")
+	}
+	// The final error should mention re-provision since Provision itself fails.
+	if !strings.Contains(err.Error(), "re-provision") && !IsHTTPStatus(err, 449) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestHTTPDo_authHeaderError(t *testing.T) {
+	c, _, srv := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be reached when auth fails")
+	})
+	c.cfg.AuthHeader = func(ctx context.Context) (string, error) {
+		return "", errSentinel("token expired")
+	}
+	c.auth = "" // ensure fallback isn't used
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodOptions, srv.URL, nil)
+	if _, err := c.httpDo(req); err == nil || !strings.Contains(err.Error(), "auth") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// errReader returns its configured error on Read.
+type errReader struct{ err error }
+
+func (e *errReader) Read(_ []byte) (int, error) { return 0, e.err }
+
+func TestReadCapped_readError(t *testing.T) {
+	want := errSentinel("network died")
+	if _, err := readCapped(&errReader{err: want}, 100); err != want {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestFindShallow_nilReceiver(t *testing.T) {
+	if findShallow(nil, "x", 5) != nil {
+		t.Error("findShallow(nil, ...) should be nil")
+	}
+}
+
 func TestAtoi(t *testing.T) {
 	cases := map[string]int{
 		"":     0,

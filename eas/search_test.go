@@ -153,6 +153,143 @@ func TestSearchEmailQuery_nilRejected(t *testing.T) {
 	}
 }
 
+func TestSearchEmail_emitsRebuildAndDeepTraversal(t *testing.T) {
+	c, cap, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(searchResponse(0))
+	})
+	_, err := c.SearchEmail(context.Background(), "x", EmailSearchOptions{
+		FolderID:       "inbox",
+		DeepTraversal:  true,
+		RebuildResults: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := wbxml.Unmarshal(cap.body, wbxml.DefaultRegistry())
+	if req.Root.Find("RebuildResults") == nil {
+		t.Error("RebuildResults missing")
+	}
+	if req.Root.Find("DeepTraversal") == nil {
+		t.Error("DeepTraversal missing")
+	}
+}
+
+func TestSearchEmailQuery_emitsRebuildAndDeepTraversal(t *testing.T) {
+	c, cap, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(searchResponse(0))
+	})
+	_, err := c.SearchEmailQuery(context.Background(), EmailClass(), EmailSearchOptions{
+		DeepTraversal:  true,
+		RebuildResults: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := wbxml.Unmarshal(cap.body, wbxml.DefaultRegistry())
+	if req.Root.Find("RebuildResults") == nil {
+		t.Error("RebuildResults missing")
+	}
+	if req.Root.Find("DeepTraversal") == nil {
+		t.Error("DeepTraversal missing")
+	}
+}
+
+func TestSearchEmail_postErrorPropagates(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	})
+	if _, err := c.SearchEmail(context.Background(), "x", EmailSearchOptions{}); err == nil {
+		t.Error("want HTTP error")
+	}
+}
+
+func TestSearchEmail_emptyResponseRejected(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200) // empty body
+	})
+	if _, err := c.SearchEmail(context.Background(), "x", EmailSearchOptions{}); err == nil {
+		t.Error("want error on empty response")
+	}
+}
+
+func TestSearchEmail_topLevelStatusError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageSearch, "Search",
+			wbxml.E(wbxml.PageSearch, "Status", wbxml.Text("4")),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	if _, err := c.SearchEmail(context.Background(), "x", EmailSearchOptions{}); !IsStatusCode(err, 4) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestSearchEmail_missingStoreRejected(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageSearch, "Search",
+			wbxml.E(wbxml.PageSearch, "Status", wbxml.Text("1")),
+			// no Store
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_, err := c.SearchEmail(context.Background(), "x", EmailSearchOptions{})
+	if err == nil || !strings.Contains(err.Error(), "<Store>") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestSearchEmail_missingRangeWithItemsRejected(t *testing.T) {
+	// A Result hits with no Range/Total → malformed response.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageSearch, "Search",
+			wbxml.E(wbxml.PageSearch, "Status", wbxml.Text("1")),
+			wbxml.E(wbxml.PageSearch, "Response",
+				wbxml.E(wbxml.PageSearch, "Store",
+					wbxml.E(wbxml.PageSearch, "Status", wbxml.Text("1")),
+					wbxml.E(wbxml.PageSearch, "Total", wbxml.Text("3")), // no Range
+				),
+			),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	if _, err := c.SearchEmail(context.Background(), "x", EmailSearchOptions{}); err == nil {
+		t.Error("want error for Total without Range")
+	}
+}
+
+func TestSearchEmail_truelyEmptyResponse(t *testing.T) {
+	// Store with no Range, no Total, no Result. Caller wants an empty
+	// EmailSearchResult, not an error.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageSearch, "Search",
+			wbxml.E(wbxml.PageSearch, "Status", wbxml.Text("1")),
+			wbxml.E(wbxml.PageSearch, "Response",
+				wbxml.E(wbxml.PageSearch, "Store",
+					wbxml.E(wbxml.PageSearch, "Status", wbxml.Text("1")),
+				),
+			),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	res, err := c.SearchEmail(context.Background(), "x", EmailSearchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Total != 0 || len(res.Items) != 0 || res.Range != "" {
+		t.Errorf("res = %+v", res)
+	}
+}
+
 func TestSearchEmail_emptyResults(t *testing.T) {
 	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")

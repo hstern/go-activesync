@@ -132,7 +132,6 @@ func TestSignAndEncryptMIME_signerErrorPropagates(t *testing.T) {
 	}
 }
 
-
 func TestEncryptMIME_validation(t *testing.T) {
 	if _, err := EncryptMIME([]byte("x"), nil); err == nil {
 		t.Error("want error with no recipients")

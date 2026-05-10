@@ -116,4 +116,3 @@ func TestGetItemEstimate_skipsNonResponseChildren(t *testing.T) {
 		t.Errorf("res = %+v", res)
 	}
 }
-

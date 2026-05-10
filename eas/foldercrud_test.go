@@ -67,6 +67,127 @@ func TestFolderUpdate_persistsKey(t *testing.T) {
 	}
 }
 
+func TestFolderCreate_validation(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be reached")
+	})
+	if _, err := c.FolderCreate(context.Background(), "0", "", FolderTypeUserGeneric); err == nil {
+		t.Error("want error for empty displayName")
+	}
+}
+
+func TestFolderCreate_syncKeyReadError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be reached")
+	})
+	c.cfg.State = &errStateStore{inner: NewMemoryState(), syncKeyErr: errSentinel("boom")}
+	if _, err := c.FolderCreate(context.Background(), "0", "X", FolderTypeUserGeneric); err == nil {
+		t.Error("want error from SyncKey read")
+	}
+}
+
+func TestFolderCreate_postErrorPropagates(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	})
+	if _, err := c.FolderCreate(context.Background(), "0", "X", FolderTypeUserGeneric); err == nil {
+		t.Error("want HTTP error")
+	}
+}
+
+func TestFolderCreate_emptyResponseRejected(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200) // empty body
+	})
+	if _, err := c.FolderCreate(context.Background(), "0", "X", FolderTypeUserGeneric); err == nil {
+		t.Error("want error on empty response")
+	}
+}
+
+func TestFolderCreate_statusError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageFolderHierarchy, "FolderCreate",
+				wbxml.E(wbxml.PageFolderHierarchy, "Status", wbxml.Text("3")),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	if _, err := c.FolderCreate(context.Background(), "0", "X", FolderTypeUserGeneric); !IsStatusCode(err, 3) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestFolderUpdate_validation(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be reached")
+	})
+	if err := c.FolderUpdate(context.Background(), "", "0", "X"); err == nil {
+		t.Error("want error for empty serverID")
+	}
+	if err := c.FolderUpdate(context.Background(), "id", "0", ""); err == nil {
+		t.Error("want error for empty newDisplayName")
+	}
+}
+
+func TestFolderUpdate_syncKeyReadError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be reached")
+	})
+	c.cfg.State = &errStateStore{inner: NewMemoryState(), syncKeyErr: errSentinel("boom")}
+	if err := c.FolderUpdate(context.Background(), "id", "0", "X"); err == nil {
+		t.Error("want error from SyncKey read")
+	}
+}
+
+func TestFolderUpdate_postErrorPropagates(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	})
+	if err := c.FolderUpdate(context.Background(), "id", "0", "X"); err == nil {
+		t.Error("want HTTP error")
+	}
+}
+
+func TestFolderDelete_validation(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be reached")
+	})
+	if err := c.FolderDelete(context.Background(), ""); err == nil {
+		t.Error("want error for empty serverID")
+	}
+}
+
+func TestFolderDelete_syncKeyReadError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server should not be reached")
+	})
+	c.cfg.State = &errStateStore{inner: NewMemoryState(), syncKeyErr: errSentinel("boom")}
+	if err := c.FolderDelete(context.Background(), "id"); err == nil {
+		t.Error("want error from SyncKey read")
+	}
+}
+
+func TestFolderDelete_postErrorPropagates(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	})
+	if err := c.FolderDelete(context.Background(), "id"); err == nil {
+		t.Error("want HTTP error")
+	}
+}
+
+func TestFolderUpdate_emptyResponseRejected(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200) // empty body
+	})
+	if err := c.FolderUpdate(context.Background(), "id", "0", "X"); err == nil {
+		t.Error("want error on empty response")
+	}
+}
+
 func TestFolderDelete_returnsErrorOnBadStatus(t *testing.T) {
 	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		doc := &wbxml.Document{
