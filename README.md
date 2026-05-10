@@ -137,6 +137,15 @@ Pull requests + `main` pushes also bring up the Docker testenv and run
 the integration suite end-to-end. Total: about 3 minutes.
 See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
+### Coverage map
+
+Concentric rings show package → file → function coverage; green is
+covered, red is not. Each segment is sized by line count, so the
+visual weight of the gaps tracks real risk. Click through for the
+underlying report.
+
+[![Coverage sunburst — concentric rings showing package, file, and function coverage across go-activesync; click for the full Codecov report](https://codecov.io/gh/hstern/go-activesync/graphs/sunburst.svg?token=FL26F2PWC9)](https://codecov.io/gh/hstern/go-activesync)
+
 ## Used by
 
 If you're building on top of this library and want to be listed, open
