@@ -172,6 +172,36 @@ when a Sync returns 500.
 - Don't render `.svg` by hand. `make svg` runs graphviz; it's
   reproducible. Source of truth is the `.dot`.
 
+## Cutting a release
+
+Before pushing a `v*` tag, the changelog must already reflect what the
+tag will say. The release workflow does NOT generate or update
+`CHANGELOG.md` — that's a manual step done in the same commit (or
+just before) the tag is created. Skipping it leaves the published
+release notes pointing at a `CHANGELOG.md` that lies.
+
+Order of operations:
+
+1. **Update `CHANGELOG.md`.** Add a new `## [vX.Y.Z] — YYYY-MM-DD`
+   section above the previous one, fill it in, and update the
+   compare-link footnotes at the bottom of the file. Mirror the same
+   prose into the tag annotation message in step 3 — they should
+   read identically.
+2. **Commit.** `git commit -m "changelog: vX.Y.Z"`. Push to `main`
+   and confirm CI is green before tagging.
+3. **Create the annotated tag.** `git tag -a vX.Y.Z -m "<body>"`.
+   Use the same content as the `CHANGELOG.md` entry for the version.
+4. **Push the tag.** `git push origin vX.Y.Z`. The release workflow
+   creates the GitHub release, warms `proxy.golang.org`, and emits
+   notes. Edit the auto-generated body to match the tag message if
+   it diverged.
+5. **Verify.** Watch `pkg.go.dev/github.com/hstern/go-activesync@vX.Y.Z`
+   for indexing (usually within a few minutes).
+
+If you find yourself about to tag without a matching `CHANGELOG.md`
+entry, stop and add it first. Skip-and-fix-later is a near-100%
+guarantee that the release page and the file disagree.
+
 ## Repo layout cheat sheet
 
 ```
