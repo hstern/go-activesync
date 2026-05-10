@@ -89,7 +89,7 @@ func parseNoteItem(serverID string, app *wbxml.Element) NoteItem {
 			case "Subject":
 				out.Subject = el.TextContent()
 			case "LastModifiedDate":
-				out.LastModifiedDate = parseEASTime(el.TextContent())
+				out.LastModifiedDate, _ = parseEASTime(el.TextContent())
 			case "Categories":
 				for _, cc := range el.Children {
 					if ce, ok := cc.(*wbxml.Element); ok && ce.Name == "Category" {

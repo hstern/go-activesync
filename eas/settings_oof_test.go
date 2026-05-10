@@ -6,6 +6,7 @@ package eas
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,6 +45,34 @@ func TestGetOof_parsesConfig(t *testing.T) {
 	}
 	if !cfg.InternalReply.Enabled || cfg.InternalReply.ReplyMessage != "Out today" {
 		t.Errorf("internal reply = %+v", cfg.InternalReply)
+	}
+}
+
+func TestGetOof_unparseableTimeIsError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageSettings, "Settings",
+				wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+				wbxml.E(wbxml.PageSettings, "Oof",
+					wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+					wbxml.E(wbxml.PageSettings, "Get",
+						wbxml.E(wbxml.PageSettings, "OofState", wbxml.Text("2")),
+						wbxml.E(wbxml.PageSettings, "StartTime", wbxml.Text("not-a-timestamp")),
+						wbxml.E(wbxml.PageSettings, "EndTime", wbxml.Text("2026-05-14T17:00:00Z")),
+					),
+				),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_, err := c.GetOof(context.Background())
+	if err == nil {
+		t.Fatal("GetOof returned nil error for unparseable StartTime; want hard failure")
+	}
+	if !strings.Contains(err.Error(), "StartTime") || !strings.Contains(err.Error(), "not-a-timestamp") {
+		t.Errorf("err = %q; want it to mention StartTime + the raw value", err)
 	}
 }
 

@@ -129,7 +129,7 @@ func recurrenceFromWBXML(e *wbxml.Element) *Recurrence {
 		case "Recurrence_Occurrences":
 			r.Occurrences = atoi(v)
 		case "Recurrence_Until":
-			r.Until = parseEASTime(v)
+			r.Until, _ = parseEASTime(v)
 		case "Recurrence_DayOfWeek":
 			r.DayOfWeek = DayOfWeek(atoi(v))
 		case "Recurrence_DayOfMonth":
@@ -201,7 +201,7 @@ func parseException(e *wbxml.Element) Exception {
 		v := ce.TextContent()
 		switch ce.Name {
 		case "ExceptionStartTime":
-			x.ExceptionStartTime = parseEASTime(v)
+			x.ExceptionStartTime, _ = parseEASTime(v)
 		case "Deleted":
 			x.Deleted = v == "1"
 		case "Subject":
@@ -209,9 +209,9 @@ func parseException(e *wbxml.Element) Exception {
 		case "Location":
 			x.Location = v
 		case "StartTime":
-			x.StartTime = parseEASTime(v)
+			x.StartTime, _ = parseEASTime(v)
 		case "EndTime":
-			x.EndTime = parseEASTime(v)
+			x.EndTime, _ = parseEASTime(v)
 		case "AllDayEvent":
 			x.AllDayEvent = v == "1"
 		case "BusyStatus":

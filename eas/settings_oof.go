@@ -6,6 +6,7 @@ package eas
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/hstern/go-activesync/wbxml"
@@ -75,11 +76,25 @@ func (c *Client) GetOof(ctx context.Context) (*OofConfig, error) {
 	if st := getEl.Find("OofState"); st != nil {
 		out.State = OofState(atoi(st.TextContent()))
 	}
+	// OOF is a scheduled feature; if the server gave us a window we can't
+	// understand, returning a zero time would silently degrade the user's
+	// schedule. Treat unparseable timestamps as a hard error so callers
+	// don't act on bogus data.
 	if t := getEl.Find("StartTime"); t != nil {
-		out.StartTime = parseEASTime(t.TextContent())
+		raw := t.TextContent()
+		parsed, ok := parseEASTime(raw)
+		if !ok && raw != "" {
+			return nil, fmt.Errorf("eas: GetOof: unparseable StartTime %q", raw)
+		}
+		out.StartTime = parsed
 	}
 	if t := getEl.Find("EndTime"); t != nil {
-		out.EndTime = parseEASTime(t.TextContent())
+		raw := t.TextContent()
+		parsed, ok := parseEASTime(raw)
+		if !ok && raw != "" {
+			return nil, fmt.Errorf("eas: GetOof: unparseable EndTime %q", raw)
+		}
+		out.EndTime = parsed
 	}
 	for _, c := range getEl.Children {
 		el, ok := c.(*wbxml.Element)

@@ -111,17 +111,17 @@ func parseTaskItem(serverID string, app *wbxml.Element) TaskItem {
 			case "Complete":
 				out.Complete = el.TextContent() == "1"
 			case "DateCompleted":
-				out.DateCompleted = parseEASTime(el.TextContent())
+				out.DateCompleted, _ = parseEASTime(el.TextContent())
 			case "StartDate":
-				out.StartDate = parseEASTime(el.TextContent())
+				out.StartDate, _ = parseEASTime(el.TextContent())
 			case "UtcStartDate":
-				out.UTCStartDate = parseEASTime(el.TextContent())
+				out.UTCStartDate, _ = parseEASTime(el.TextContent())
 			case "DueDate":
-				out.DueDate = parseEASTime(el.TextContent())
+				out.DueDate, _ = parseEASTime(el.TextContent())
 			case "UtcDueDate":
-				out.UTCDueDate = parseEASTime(el.TextContent())
+				out.UTCDueDate, _ = parseEASTime(el.TextContent())
 			case "ReminderTime":
-				out.Reminder = parseEASTime(el.TextContent())
+				out.Reminder, _ = parseEASTime(el.TextContent())
 			}
 		case wbxml.PageAirSyncBase:
 			if el.Name == "Body" {

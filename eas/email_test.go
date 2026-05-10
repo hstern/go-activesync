@@ -29,11 +29,15 @@ func TestParseEASTime(t *testing.T) {
 		{"junk", "", true},
 	}
 	for _, c := range cases {
-		got := parseEASTime(c.in)
+		got, ok := parseEASTime(c.in)
 		if c.isZero {
-			if !got.IsZero() {
-				t.Errorf("parseEASTime(%q) = %v, want zero", c.in, got)
+			if ok || !got.IsZero() {
+				t.Errorf("parseEASTime(%q) = (%v, %v), want (zero, false)", c.in, got, ok)
 			}
+			continue
+		}
+		if !ok {
+			t.Errorf("parseEASTime(%q) returned ok=false, want true", c.in)
 			continue
 		}
 		want, _ := time.Parse(time.RFC3339, c.want)

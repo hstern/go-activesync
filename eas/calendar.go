@@ -243,9 +243,9 @@ func parseCalendarField(out *EventItem, el *wbxml.Element) {
 	case "Location":
 		out.Location = el.TextContent()
 	case "StartTime":
-		out.StartTime = parseEASTime(el.TextContent())
+		out.StartTime, _ = parseEASTime(el.TextContent())
 	case "EndTime":
-		out.EndTime = parseEASTime(el.TextContent())
+		out.EndTime, _ = parseEASTime(el.TextContent())
 	case "AllDayEvent":
 		out.AllDayEvent = el.TextContent() == "1"
 	case "BusyStatus":

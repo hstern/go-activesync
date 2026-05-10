@@ -124,7 +124,7 @@ func parseEmailFieldEmailPage(out *EmailItem, el *wbxml.Element) {
 	case "DisplayTo":
 		out.DisplayTo = el.TextContent()
 	case "DateReceived":
-		out.DateReceived = parseEASTime(el.TextContent())
+		out.DateReceived, _ = parseEASTime(el.TextContent())
 	case "Read":
 		out.Read = el.TextContent() == "1"
 	case "Importance":
@@ -230,15 +230,19 @@ func firstOpaque(e *wbxml.Element) []byte {
 	return nil
 }
 
-// parseEASTime parses the ISO-8601 timestamp formats EAS uses. EAS varies
-// between fractional-second and integer-second precision, and Z-Push's
-// CalDAV/CardDAV backends pass through the iCalendar basic form
-// (YYYYMMDDTHHMMSSZ, no separators); try the common forms and return
-// zero on failure rather than rejecting the message.
-func parseEASTime(s string) time.Time {
+// parseEASTime parses the ISO-8601 timestamp formats EAS uses. EAS
+// varies between fractional-second and integer-second precision, and
+// Z-Push's CalDAV/CardDAV backends pass through the iCalendar basic
+// form (YYYYMMDDTHHMMSSZ, no separators).
+//
+// Returns ok=false if the value is empty or in an unrecognised format,
+// so callers can distinguish "field absent" from "field present and
+// successfully parsed". The zero time.Time is returned on failure so
+// the value is always safe to use even when ok is false.
+func parseEASTime(s string) (time.Time, bool) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return time.Time{}
+		return time.Time{}, false
 	}
 	for _, layout := range []string{
 		"2006-01-02T15:04:05.000Z",
@@ -250,8 +254,8 @@ func parseEASTime(s string) time.Time {
 		"20060102",         // iCalendar all-day date
 	} {
 		if t, err := time.Parse(layout, s); err == nil {
-			return t
+			return t, true
 		}
 	}
-	return time.Time{}
+	return time.Time{}, false
 }

@@ -188,9 +188,9 @@ func parseContactItem(serverID string, app *wbxml.Element) ContactItem {
 		case "BusinessAddressCountry":
 			out.BusinessAddress.Country = el.TextContent()
 		case "Birthday":
-			out.Birthday = parseEASTime(el.TextContent())
+			out.Birthday, _ = parseEASTime(el.TextContent())
 		case "Anniversary":
-			out.Anniversary = parseEASTime(el.TextContent())
+			out.Anniversary, _ = parseEASTime(el.TextContent())
 		case "WebPage":
 			out.WebPage = el.TextContent()
 		case "Picture":
