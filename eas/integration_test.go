@@ -261,8 +261,20 @@ func TestIntegration_Calendar_CRUD(t *testing.T) {
 		}
 	})
 
-	// Sync to confirm the event landed.
-	res, err := c.SyncCalendar(ctx, calID, eas.CalendarSyncOptions{})
+	// Verify via a fresh client so the bootstrap-then-Sync dance returns
+	// the new event in Added. The original client's per-folder state has
+	// already advanced past the create (EAS doesn't echo a client's own
+	// adds back on subsequent syncs of the same connection). Use a
+	// distinct DeviceID so the verifier's syncs don't invalidate the
+	// original client's server-side sync keys — Z-Push tracks state per
+	// (user, device) and a second client on the same DeviceID would
+	// rotate the keys out from under our DeleteEvent cleanup.
+	t.Setenv("EAS_INTEGRATION_DEVICE", "verifier000000000000000000000000")
+	c2 := provisionedClient(t)
+	if _, err := c2.FolderSync(ctx); err != nil {
+		t.Fatalf("verify FolderSync: %v", err)
+	}
+	res, err := c2.SyncCalendar(ctx, calID, eas.CalendarSyncOptions{})
 	mustOK(t, err)
 	found := false
 	for _, ev := range res.Added {
@@ -273,16 +285,8 @@ func TestIntegration_Calendar_CRUD(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Logf("event %q not yet visible (sync timing) — checking Changed", subject)
-		for _, ev := range res.Changed {
-			if ev.Subject == subject {
-				found = true
-				break
-			}
-		}
-	}
-	if !found {
-		t.Errorf("created event not visible after Sync")
+		t.Errorf("created event %q not visible after Sync (Added=%d)",
+			subject, len(res.Added))
 	}
 }
 

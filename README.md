@@ -118,8 +118,9 @@ go test -tags integration -v ./eas
 ```
 
 A self-contained Z-Push test target lives in [`testenv/`](testenv/)
-(Docker; one container with Z-Push 2.7.6 + Dovecot + Postfix). One
-command stands it up:
+(Docker; one container with Z-Push 2.7.6 + Dovecot + Postfix +
+Radicale, exercising email + calendar + contacts). One command stands
+it up:
 
 ```sh
 cd testenv && make up && make test && make down

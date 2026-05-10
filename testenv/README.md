@@ -1,10 +1,11 @@
 # Integration test environment
 
 A single-container Z-Push stack used by the `go-activesync` integration
-tests. Bundles Z-Push 2.7, Apache + PHP, Dovecot (IMAP), and Postfix
-(local SMTP delivery) so the tests can exercise FolderSync, SyncEmail,
-SendMail loopback, and friends without any external mail
-infrastructure.
+tests. Bundles Z-Push 2.7 (configured for `BackendCombined`), Apache +
+PHP, Dovecot (IMAP for mail), Postfix (local SMTP delivery), and
+Radicale (CalDAV + CardDAV for calendar and contacts) so the tests can
+exercise FolderSync, SyncEmail, SendMail loopback, Calendar CRUD,
+Contacts CRUD, and friends without any external mail infrastructure.
 
 The container is local-only — never expose it to a real network.
 
@@ -35,9 +36,10 @@ go test -tags integration -v ./eas
 
 | Component | Where           | Notes                                  |
 |-----------|-----------------|----------------------------------------|
-| Z-Push    | `:8580/Microsoft-Server-ActiveSync` | Apache + PHP, BackendIMAP |
+| Z-Push    | `:8580/Microsoft-Server-ActiveSync` | Apache + PHP, BackendCombined → IMAP+CalDAV+CardDAV |
 | Dovecot   | inside container, `localhost:143`   | PAM-backed system users  |
 | Postfix   | inside container, `localhost:25`    | LMTP → Dovecot → Maildir |
+| Radicale  | inside container, `localhost:5232`  | htpasswd auth, pre-seeded `/integration/calendar` and `/integration/addressbook` |
 | Test user | `integration` / `integration`        | Maildir at `/home/integration/Maildir` |
 
 `make seed` injects a fixture message into the inbox via IMAP APPEND
@@ -60,21 +62,26 @@ for self-signed certs and `EAS_INTEGRATION_VERBOSE=1` for slog debug.
 - **SendMail tests don't see the loopback message**: postfix may still
   be queueing on first boot. Wait a few seconds and re-run, or
   `make shell` and `mailq` to inspect.
-- **No Calendar / Contacts folders in FolderSync**: this stack ships
-  IMAP only (BackendIMAP). The corresponding tests in
-  `integration_test.go` skip cleanly. To add CalDAV/CardDAV, switch
-  Z-Push to BackendCombined and add a Radicale (or similar) container
-  — left as an exercise; the IMAP-only path covers the common case.
+- **Calendar / Contacts events created via the Go client don't reappear
+  on the same client's next Sync**: this is correct EAS behavior — the
+  server doesn't echo a client's own adds back to it. The Calendar CRUD
+  test verifies the round-trip with a *second* client (different
+  DeviceID) so the bootstrap-then-Sync dance returns the new item.
+- **`Radicale: 5xx` in z-push logs**: usually a permissions glitch on
+  `/var/lib/radicale/collections`. `make logs` will show the trace.
+  `entrypoint.sh` re-`chown`s on every boot, so a `make down && make up`
+  cycle is the fastest recovery.
 
 ## Files
 
 - `Dockerfile.zpush` — image definition
 - `docker-compose.yml` — the one-service stack
 - `entrypoint.sh` — container init (perms + supervisord)
-- `supervisord.conf` — runs apache + dovecot + postfix
+- `supervisord.conf` — runs apache + dovecot + postfix + radicale
 - `apache-zpush.conf` — Apache vhost serving Z-Push
 - `dovecot.conf` — IMAP + LMTP config, system-user passdb
 - `postfix-main.cf` — local LMTP delivery only
-- `zpush-config.php` — Z-Push main config (BackendIMAP)
-- `zpush-imap.php` — IMAP backend pointed at localhost
+- `radicale.conf` — Radicale CalDAV/CardDAV server config (htpasswd auth)
+- `zpush-patch.sh` — sed-patches stock Z-Push configs to BackendCombined
+  with IMAP+CalDAV+CardDAV routing
 - `Makefile` — `up`/`down`/`test`/`logs`/`shell`/`seed`/`clean`

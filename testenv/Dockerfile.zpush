@@ -18,9 +18,12 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates wget gnupg \
         apache2 libapache2-mod-php \
-        php-curl php-mbstring php-soap php-xml php-cli \
+        php-curl php-mbstring php-soap php-xml php-cli php-intl \
+        libawl-php \
         dovecot-imapd dovecot-lmtpd \
         postfix \
+        radicale \
+        python3-passlib \
         supervisor \
         procps \
     && rm -rf /var/lib/apt/lists/*
@@ -49,19 +52,42 @@ RUN useradd -m -s /bin/bash integration \
     && mkdir -p /home/integration/Maildir/{cur,new,tmp} \
     && chown -R integration:integration /home/integration/Maildir
 
+# Radicale: htpasswd auth + pre-seeded calendar + addressbook for the
+# test user. Z-Push's CalDAV/CardDAV backends do PROPFIND at the
+# principal URL to discover collections, so they have to exist before
+# the first sync — empty .Radicale.props files with the right `tag`
+# field is enough for radicale to recognise them.
+RUN mkdir -p /etc/radicale /var/lib/radicale/collections/collection-root/integration/calendar \
+        /var/lib/radicale/collections/collection-root/integration/addressbook \
+    && python3 -c "from passlib.apache import HtpasswdFile; \
+        h = HtpasswdFile('/etc/radicale/users', new=True, default_scheme='bcrypt'); \
+        h.set_password('integration', 'integration'); h.save()" \
+    && printf '{"tag": "VCALENDAR", "D:displayname": "Calendar"}\n' \
+        > /var/lib/radicale/collections/collection-root/integration/calendar/.Radicale.props \
+    && printf '{"tag": "VADDRESSBOOK", "D:displayname": "Contacts"}\n' \
+        > /var/lib/radicale/collections/collection-root/integration/addressbook/.Radicale.props \
+    && (id radicale >/dev/null 2>&1 || useradd -r -s /usr/sbin/nologin radicale) \
+    && chown -R radicale:radicale /var/lib/radicale /etc/radicale
+
 # Configuration files. We keep Z-Push's stock config.php and
 # backend/imap/config.php (they define dozens of constants index.php
 # expects) and patch only the values that need to change for our
 # integration target.
 COPY dovecot.conf /etc/dovecot/dovecot.conf
 COPY postfix-main.cf /etc/postfix/main.cf
+COPY radicale.conf /etc/radicale/config
 COPY apache-zpush.conf /etc/apache2/sites-available/zpush.conf
 COPY zpush-patch.sh /usr/local/bin/zpush-patch.sh
 COPY supervisord.conf /etc/supervisor/conf.d/zpush.conf
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh /usr/local/bin/zpush-patch.sh \
     && /usr/local/bin/zpush-patch.sh \
-    && chown www-data:www-data /usr/share/z-push/config.php /usr/share/z-push/backend/imap/config.php
+    && chown www-data:www-data \
+        /usr/share/z-push/config.php \
+        /usr/share/z-push/backend/imap/config.php \
+        /usr/share/z-push/backend/caldav/config.php \
+        /usr/share/z-push/backend/carddav/config.php \
+        /usr/share/z-push/backend/combined/config.php
 
 # Apache wiring.
 RUN a2dissite 000-default \

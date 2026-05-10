@@ -9,6 +9,13 @@ set -e
 mkdir -p /var/log/z-push /var/lib/z-push
 chown -R www-data:www-data /var/log/z-push /var/lib/z-push
 
+# Radicale needs write access on its collections + a place for cache.
+# Bind-mounting an empty volume on /var/lib/radicale would clobber the
+# pre-seeded calendar/addressbook, so we don't volume-mount it; just
+# refresh ownership in case of host-uid drift.
+mkdir -p /var/lib/radicale/collections /var/lib/radicale/cache
+chown -R radicale:radicale /var/lib/radicale
+
 # Create the apache /var/run dir that some systems clean on boot.
 mkdir -p /var/run/apache2 /var/log/apache2
 chown -R www-data:www-data /var/run/apache2 /var/log/apache2
