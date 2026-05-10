@@ -40,6 +40,27 @@ sed -i "s|define('IMAP_FOLDER_TRASH',[ ]*'[^']*');|define('IMAP_FOLDER_TRASH', '
 sed -i "s|define('IMAP_FOLDER_SPAM',[ ]*'[^']*');|define('IMAP_FOLDER_SPAM', 'Junk');|" "$IMAP_CONFIG"
 sed -i "s|define('IMAP_FOLDER_ARCHIVE',[ ]*'[^']*');|define('IMAP_FOLDER_ARCHIVE', 'Archive');|" "$IMAP_CONFIG"
 
+# Force UTF-8 as the default charset for body re-encoding. Stock Z-Push
+# leaves this empty, which means SmartReply/SmartForward fall back to
+# the original message's Content-Type charset header — and plain-text
+# loopback messages from postfix arrive without one. The empty fallback
+# trips PHP imap_*() into latin1, then the reply-quote conversion fails
+# and Z-Push surfaces it as Status=120 (CannotConvertContent).
+# (Tracking: github.com/hstern/go-activesync issue #3)
+sed -i "s|define('IMAP_DEFAULT_CHARSET',[ ]*'[^']*');|define('IMAP_DEFAULT_CHARSET', 'UTF-8');|" "$IMAP_CONFIG"
+
+# Inline forward: include the original body text in SmartForward output.
+# The default is true in modern Z-Push, but pin it explicitly so a
+# future upstream default-flip can't silently regress SmartForward.
+sed -i "s|define('IMAP_INLINE_FORWARD',[ ]*[a-z]*);|define('IMAP_INLINE_FORWARD', true);|" "$IMAP_CONFIG"
+
+# Mailbox folder prefix: Dovecot's `namespace inbox { inbox = yes }`
+# config places caller-created mailboxes at the top level (not under
+# INBOX). Pin the prefix to empty so Z-Push doesn't search for
+# "INBOX.x" when the IMAP path is actually "x" — that mismatch is what
+# triggers HTTP 500 on FolderDelete.
+sed -i "s|define('IMAP_FOLDER_PREFIX',[ ]*'[^']*');|define('IMAP_FOLDER_PREFIX', '');|" "$IMAP_CONFIG"
+
 cat >> "$IMAP_CONFIG" <<'EOF'
 
 // Integration test override: SMTP via local postfix, no auth.

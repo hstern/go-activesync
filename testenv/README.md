@@ -72,6 +72,42 @@ for self-signed certs and `EAS_INTEGRATION_VERBOSE=1` for slog debug.
   `entrypoint.sh` re-`chown`s on every boot, so a `make down && make up`
   cycle is the fastest recovery.
 
+## Known limitations
+
+The Z-Push 2.7 BackendCombined stack has a few rough edges that the
+go-activesync integration tests and the downstream activesync-mcp Tier 3
+e2e suite work around. Tracked in [issue #3](https://github.com/hstern/go-activesync/issues/3).
+
+- **Ping returns Status=7 (FolderHierarchyOutOfDate) on the very first
+  call after FolderSync.** Z-Push needs at least one prior SyncEmail
+  per folder before it has a baseline to detect changes against. The
+  integration tests bootstrap each folder with `SyncEmail{WindowSize: 1,
+  NoBootstrap: true}` before starting the Ping watcher
+  (see `TestIntegration_Ping_NotifiesOnNewEmail`). Production callers
+  that hit Status=7 should re-do FolderSync and re-subscribe; this is
+  spec-compliant recovery behavior, not a Z-Push bug we can patch.
+
+- **SmartReply/SmartForward returns Status=120 (CannotConvertContent)
+  on plain-text-only originals.** `zpush-patch.sh` now forces
+  `IMAP_DEFAULT_CHARSET = 'UTF-8'` and pins `IMAP_INLINE_FORWARD = true`
+  — those address the most common cause (the empty fallback charset
+  triggers a latin1 round-trip that fails on UTF-8 bodies). Reply
+  composition against MIME-multipart originals still occasionally hits
+  120 due to BackendIMAP's quoted-printable splicing; a downstream
+  retry with HTML body is the recommended workaround.
+
+- **FolderDelete on caller-created top-level folders returns HTTP 500.**
+  Dovecot's `namespace inbox { inbox = yes }` puts caller-created
+  mailboxes at the top level rather than under `INBOX.`; Z-Push
+  BackendIMAP previously assumed an `INBOX.` prefix when resolving the
+  IMAP path on delete. `zpush-patch.sh` now pins `IMAP_FOLDER_PREFIX = ''`
+  to match. If the 500 persists, callers can move the operation under
+  an existing folder (e.g. `parent_id = <Inbox ID>`).
+
+If you change anything in `zpush-patch.sh` to address these, rebuild
+the image (`make down && make up`) before running `make test` — the
+patches are baked in at build time.
+
 ## Files
 
 - `Dockerfile.zpush` — image definition
