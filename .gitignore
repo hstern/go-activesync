@@ -9,6 +9,9 @@ coverage.txt
 .vscode/
 *.swp
 
+# Per-machine agent state (Claude Code permissions etc.)
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db
