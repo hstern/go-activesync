@@ -351,6 +351,149 @@ func TestParseAutodiscoverResponse_noMobileSync(t *testing.T) {
 	}
 }
 
+func TestAutodiscover_defaultHTTPClient(t *testing.T) {
+	// Omit HTTPClient — Autodiscover should fall back to http.DefaultClient.
+	// Using a plain HTTP httptest server (no TLS) means DefaultClient can
+	// connect to it without trust issues.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/xml")
+		fmt.Fprint(w, okAutodiscoverXML)
+	}))
+	defer srv.Close()
+	res, err := Autodiscover(context.Background(), "u@x.com", "p", AutodiscoverOptions{
+		Endpoints: []string{srv.URL},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.URL == "" {
+		t.Error("URL empty")
+	}
+}
+
+func TestAutodiscover_srvLookupError(t *testing.T) {
+	// Initial endpoints fail, redirect step is skipped, and the SRV
+	// resolver returns an error → fall through to the lastErr aggregator.
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "no", 500)
+	}))
+	defer bad.Close()
+	stub := func(_ context.Context, _, _, _ string) (string, []*net.SRV, error) {
+		return "", nil, errSentinel("srv broken")
+	}
+	_, err := Autodiscover(context.Background(), "u@x.com", "p", AutodiscoverOptions{
+		HTTPClient:       bad.Client(),
+		Endpoints:        nil, // force default flow
+		SkipHTTPRedirect: true,
+		SRVLookup:        stub,
+	})
+	if err == nil || !strings.Contains(err.Error(), "srv lookup") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestAutodiscover_srvSuccessAfterPostFailure(t *testing.T) {
+	// Initial POST endpoints fail; SRV records lead to a working server.
+	xmlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/xml")
+		fmt.Fprint(w, okAutodiscoverXML)
+	}))
+	defer xmlSrv.Close()
+	u, _ := url.Parse(xmlSrv.URL)
+	host, port := u.Hostname(), u.Port()
+	stub := func(_ context.Context, _, _, _ string) (string, []*net.SRV, error) {
+		return "", []*net.SRV{{Target: host + ".", Port: parsePort(port)}}, nil
+	}
+	// Use rerouteTransport so the POST to https://<srvhost>/Autodiscover/...
+	// is rewritten to the test server.
+	hc := &http.Client{Transport: rerouteTransport{target: xmlSrv.URL, t: xmlSrv.Client().Transport}}
+	res, err := Autodiscover(context.Background(), "u@x.com", "p", AutodiscoverOptions{
+		HTTPClient:       hc,
+		Endpoints:        nil,
+		SkipHTTPRedirect: true,
+		SRVLookup:        stub,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.URL == "" {
+		t.Error("URL empty after SRV success")
+	}
+}
+
+func TestAutodiscover_followsRedirectThroughFullFlow(t *testing.T) {
+	// Set up two reroute targets: the first POST endpoints fail, the
+	// http://autodiscover.<domain> GET returns 302 to the XML server.
+	xmlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/xml")
+		fmt.Fprint(w, okAutodiscoverXML)
+	}))
+	defer xmlSrv.Close()
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", "https://x/Autodiscover/Autodiscover.xml")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	// Smart transport: rewrite https://...x.invalid/... to the failing
+	// server (so the initial POST endpoints fail), http://autodiscover.x.invalid/...
+	// to the redirector, and https://x/... to xmlSrv.
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "no", 500)
+	}))
+	defer bad.Close()
+
+	transport := smartTransport{
+		bad:        bad,
+		redirector: redirector,
+		xmlSrv:     xmlSrv,
+	}
+	hc := &http.Client{Transport: transport}
+	res, err := Autodiscover(context.Background(), "u@x.invalid", "p", AutodiscoverOptions{
+		HTTPClient:    hc,
+		Endpoints:     nil,
+		SkipSRVLookup: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.URL == "" {
+		t.Error("URL empty after redirect-follow success")
+	}
+}
+
+// smartTransport routes Autodiscover's hard-coded endpoints to controlled
+// httptest servers without touching real DNS.
+type smartTransport struct {
+	bad, redirector, xmlSrv *httptest.Server
+}
+
+func (s smartTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	switch {
+	case req.URL.Scheme == "http" && strings.HasPrefix(req.URL.Host, "autodiscover."):
+		u, _ := url.Parse(s.redirector.URL)
+		clone.URL.Scheme = u.Scheme
+		clone.URL.Host = u.Host
+		clone.Host = u.Host
+		return s.redirector.Client().Transport.RoundTrip(clone)
+	case req.URL.Host == "x":
+		// 302 target.
+		u, _ := url.Parse(s.xmlSrv.URL)
+		clone.URL.Scheme = u.Scheme
+		clone.URL.Host = u.Host
+		clone.Host = u.Host
+		return s.xmlSrv.Client().Transport.RoundTrip(clone)
+	default:
+		// Initial POST endpoints — fail.
+		u, _ := url.Parse(s.bad.URL)
+		clone.URL.Scheme = u.Scheme
+		clone.URL.Host = u.Host
+		clone.Host = u.Host
+		return s.bad.Client().Transport.RoundTrip(clone)
+	}
+}
+
 func TestBuildAutodiscoverRequest_includesEmail(t *testing.T) {
 	b, err := buildAutodiscoverRequest("u@example.com")
 	if err != nil {

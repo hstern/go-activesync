@@ -372,6 +372,51 @@ func TestGetOof_unparseableEndTimeIsError(t *testing.T) {
 	}
 }
 
+func TestGetOof_parsesTimeBasedWindow(t *testing.T) {
+	// Successful StartTime + EndTime parse populates the OofConfig fields.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageSettings, "Settings",
+			wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+			wbxml.E(wbxml.PageSettings, "Oof",
+				wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+				wbxml.E(wbxml.PageSettings, "Get",
+					wbxml.E(wbxml.PageSettings, "OofState", wbxml.Text("2")),
+					wbxml.E(wbxml.PageSettings, "StartTime", wbxml.Text("2026-05-12T09:00:00Z")),
+					wbxml.E(wbxml.PageSettings, "EndTime", wbxml.Text("2026-05-14T17:00:00Z")),
+				),
+			),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	cfg, err := c.GetOof(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.StartTime.IsZero() || cfg.EndTime.IsZero() {
+		t.Errorf("times = %v / %v", cfg.StartTime, cfg.EndTime)
+	}
+}
+
+func TestSetOof_emitsHTMLBodyType(t *testing.T) {
+	c, cap, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200)
+	})
+	_ = c.SetOof(context.Background(), OofConfig{
+		State: OofGlobal,
+		InternalReply: OofMessage{
+			Enabled:      true,
+			ReplyMessage: "<p>HTML reply</p>",
+			BodyType:     BodyTypeHTML,
+		},
+	})
+	req, _ := wbxml.Unmarshal(cap.body, wbxml.DefaultRegistry())
+	if bt := req.Root.Find("BodyType"); bt == nil || bt.TextContent() != "HTML" {
+		t.Errorf("BodyType = %v, want HTML", bt)
+	}
+}
+
 func TestGetOof_externalRepliesAndHTML(t *testing.T) {
 	// Cover AppliesToExternalKnown / AppliesToExternalUnknown branches and
 	// the BodyType=HTML case.

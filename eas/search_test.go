@@ -265,6 +265,39 @@ func TestSearchEmail_missingRangeWithItemsRejected(t *testing.T) {
 	}
 }
 
+func TestSearchEmail_collectionIdPrefixesEmptyServerID(t *testing.T) {
+	// A Result with no LongId but a CollectionId — runSearch prepends
+	// "<CollectionId>:" before the (empty) server id and emits the entry.
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageSearch, "Search",
+			wbxml.E(wbxml.PageSearch, "Status", wbxml.Text("1")),
+			wbxml.E(wbxml.PageSearch, "Response",
+				wbxml.E(wbxml.PageSearch, "Store",
+					wbxml.E(wbxml.PageSearch, "Status", wbxml.Text("1")),
+					wbxml.E(wbxml.PageSearch, "Result",
+						wbxml.E(wbxml.PageAirSync, "CollectionId", wbxml.Text("inbox")),
+						wbxml.E(wbxml.PageSearch, "Properties",
+							wbxml.E(wbxml.PageEmail, "Subject", wbxml.Text("S")),
+						),
+					),
+					wbxml.E(wbxml.PageSearch, "Range", wbxml.Text("0-0")),
+					wbxml.E(wbxml.PageSearch, "Total", wbxml.Text("1")),
+				),
+			),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	res, err := c.SearchEmail(context.Background(), "x", EmailSearchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Items) != 1 || !strings.HasPrefix(res.Items[0].ServerID, "inbox:") {
+		t.Errorf("items = %+v", res.Items)
+	}
+}
+
 func TestSearchEmail_truelyEmptyResponse(t *testing.T) {
 	// Store with no Range, no Total, no Result. Caller wants an empty
 	// EmailSearchResult, not an error.
