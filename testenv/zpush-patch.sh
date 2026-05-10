@@ -98,11 +98,14 @@ class BackendCombinedConfig {
                 SYNC_FOLDER_TYPE_USER_APPOINTMENT => 'c',
                 SYNC_FOLDER_TYPE_CONTACT          => 'd',
                 SYNC_FOLDER_TYPE_USER_CONTACT     => 'd',
-                // Tasks/notes/journal: route to mail so Z-Push won't blow up
-                // on missing collections; integration tests for those classes
-                // skip cleanly when no folder is found.
-                SYNC_FOLDER_TYPE_TASK             => 'i',
-                SYNC_FOLDER_TYPE_USER_TASK        => 'i',
+                // Tasks: BackendCalDAV exposes a Tasks ('T'-prefixed)
+                // companion folder for every calendar collection — those
+                // hold the VTODO components alongside the VEVENTs.
+                SYNC_FOLDER_TYPE_TASK             => 'c',
+                SYNC_FOLDER_TYPE_USER_TASK        => 'c',
+                // Notes: no clean CalDAV/CardDAV mapping (EAS Notes is an
+                // Outlook concept). Route to mail so the backend doesn't
+                // error; integration tests for notes skip cleanly.
                 SYNC_FOLDER_TYPE_NOTE             => 'i',
                 SYNC_FOLDER_TYPE_USER_NOTE        => 'i',
                 SYNC_FOLDER_TYPE_JOURNAL          => 'i',

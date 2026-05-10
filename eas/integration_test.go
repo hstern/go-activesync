@@ -295,6 +295,58 @@ func TestIntegration_Calendar_CRUD(t *testing.T) {
 	}
 }
 
+func TestIntegration_Tasks_CRUD(t *testing.T) {
+	c := provisionedClient(t)
+	ctx := context.Background()
+	folders, err := c.FolderSync(ctx)
+	mustOK(t, err)
+	taskID := findFirstByType(folders.Added, eas.FolderTypeTasks, eas.FolderTypeUserTasks)
+	if taskID == "" {
+		t.Skip("no Tasks folder")
+	}
+
+	due := time.Now().Add(48 * time.Hour).Truncate(time.Hour).UTC()
+	subject := fmt.Sprintf("go-activesync integration task %d", time.Now().UnixNano())
+
+	id, err := c.CreateTask(ctx, taskID, eas.TaskDraft{
+		Subject:    subject,
+		Importance: 1,
+		DueDate:    due,
+		UTCDueDate: due,
+	})
+	mustOK(t, err)
+	t.Logf("created task id=%s", id)
+	t.Cleanup(func() {
+		if err := c.DeleteTask(context.Background(), taskID, id); err != nil {
+			t.Logf("cleanup DeleteTask: %v", err)
+		}
+	})
+
+	// Verify via a fresh client (separate DeviceID) — same EAS sync
+	// semantics as Calendar_CRUD: the creating client's state has
+	// already advanced past the add.
+	t.Setenv("EAS_INTEGRATION_DEVICE", "tasks-verifier000000000000000000")
+	c2 := provisionedClient(t)
+	if _, err := c2.FolderSync(ctx); err != nil {
+		t.Fatalf("verify FolderSync: %v", err)
+	}
+	res, err := c2.SyncTasks(ctx, taskID)
+	mustOK(t, err)
+	var found *eas.TaskItem
+	for i := range res.Added {
+		if res.Added[i].Subject == subject {
+			found = &res.Added[i]
+			t.Logf("task visible: id=%s due=%v complete=%v",
+				found.ServerID, found.DueDate, found.Complete)
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("created task %q not visible after Sync (Added=%d)",
+			subject, len(res.Added))
+	}
+}
+
 func TestIntegration_GAL_Search(t *testing.T) {
 	c := provisionedClient(t)
 	ctx := context.Background()
