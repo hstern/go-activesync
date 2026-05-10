@@ -113,12 +113,16 @@ jobs:
 
       # Test Analytics: upload junit.xml even when tests fail so flaky
       # / consistently-failing tests show up in Codecov dashboards.
-      # `codecov/test-results-action@v5` is the supported action per
-      # https://docs.codecov.com/docs/test-analytics — the unified
-      # codecov-action does not file uploads correctly into the Tests
-      # page (it routes them through upload-coverage no matter how
-      # `report_type` is set, which silently drops the JUnit data).
-      - uses: codecov/test-results-action@v5
+      # codecov/test-results-action is the only action that correctly
+      # invokes `codecovcli do-upload --report-type test_results` under
+      # the hood — codecov-action's `report_type: test_results` input
+      # silently routes the upload through the coverage pipeline
+      # (upload-coverage), which drops JUnit data. The action emits a
+      # deprecation banner pointing at codecov-action@v5+; ignore it
+      # until the unified action's test-results path actually works.
+      # The Codecov docs claim v5 of this action exists but the repo
+      # only publishes up to v1.2.1, so we pin to the v1 major tag.
+      - uses: codecov/test-results-action@v1
         if: ${{ !cancelled() }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -179,7 +183,7 @@ jobs:
 
       # Surface integration-test analytics separately from unit so
       # Codecov can track Z-Push-flakiness independently of pure-Go bugs.
-      - uses: codecov/test-results-action@v5
+      - uses: codecov/test-results-action@v1
         if: ${{ !cancelled() }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
