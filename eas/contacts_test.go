@@ -85,7 +85,7 @@ func TestDeleteContact_emitsDelete(t *testing.T) {
 func TestParseContactItem_allFields(t *testing.T) {
 	// Picture: build a base64 payload the parser will decode.
 	pic := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46} // JPEG-ish prefix
-	picB64 := "/9j/4AAQSkY=" // base64 of pic
+	picB64 := "/9j/4AAQSkY="                                      // base64 of pic
 	app := wbxml.E(wbxml.PageAirSync, "ApplicationData",
 		wbxml.E(wbxml.PageContacts, "FirstName", wbxml.Text("Alice")),
 		wbxml.E(wbxml.PageContacts, "LastName", wbxml.Text("Engineer")),

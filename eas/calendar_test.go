@@ -194,6 +194,154 @@ func TestRespondInvite_basic(t *testing.T) {
 	}
 }
 
+func TestParseCalendarField_allFields(t *testing.T) {
+	out := EventItem{}
+	cases := []struct {
+		name, text string
+		check      func(*EventItem) bool
+	}{
+		{"Subject", "Standup", func(e *EventItem) bool { return e.Subject == "Standup" }},
+		{"Location", "Conf 5", func(e *EventItem) bool { return e.Location == "Conf 5" }},
+		{"AllDayEvent", "1", func(e *EventItem) bool { return e.AllDayEvent }},
+		{"BusyStatus", "2", func(e *EventItem) bool { return e.BusyStatus == 2 }},
+		{"Sensitivity", "1", func(e *EventItem) bool { return e.Sensitivity == 1 }},
+		{"MeetingStatus", "3", func(e *EventItem) bool { return e.MeetingStatus == 3 }},
+		{"Reminder", "15", func(e *EventItem) bool { return e.Reminder == 15 }},
+		{"OrganizerName", "Alice", func(e *EventItem) bool { return e.OrganizerName == "Alice" }},
+		{"OrganizerEmail", "alice@x", func(e *EventItem) bool { return e.OrganizerEmail == "alice@x" }},
+		{"UID", "uid-123", func(e *EventItem) bool { return e.UID == "uid-123" }},
+	}
+	for _, tc := range cases {
+		parseCalendarField(&out, wbxml.E(wbxml.PageCalendar, tc.name, wbxml.Text(tc.text)))
+		if !tc.check(&out) {
+			t.Errorf("%s: %+v", tc.name, out)
+		}
+	}
+	// StartTime / EndTime go through parseEASTime.
+	parseCalendarField(&out, wbxml.E(wbxml.PageCalendar, "StartTime", wbxml.Text("2026-05-12T14:00:00Z")))
+	parseCalendarField(&out, wbxml.E(wbxml.PageCalendar, "EndTime", wbxml.Text("2026-05-12T15:00:00Z")))
+	if out.StartTime.IsZero() || out.EndTime.IsZero() {
+		t.Errorf("times = %+v", out)
+	}
+	// Attendees is a structured nested field.
+	parseCalendarField(&out, wbxml.E(wbxml.PageCalendar, "Attendees",
+		wbxml.E(wbxml.PageCalendar, "Attendee",
+			wbxml.E(wbxml.PageCalendar, "Name", wbxml.Text("Bob")),
+			wbxml.E(wbxml.PageCalendar, "Email", wbxml.Text("bob@x")),
+			wbxml.E(wbxml.PageCalendar, "AttendeeStatus", wbxml.Text("3")),
+			wbxml.E(wbxml.PageCalendar, "AttendeeType", wbxml.Text("1")),
+		),
+	))
+	if len(out.Attendees) != 1 || out.Attendees[0].Email != "bob@x" ||
+		out.Attendees[0].AttendeeStatus != 3 || out.Attendees[0].AttendeeType != 1 {
+		t.Errorf("Attendees = %+v", out.Attendees)
+	}
+}
+
+func TestParseCalendarField_timezone(t *testing.T) {
+	out := EventItem{}
+	// EST: UTC-5 (StandardBias = +300 minutes since EAS bias is offset
+	// from UTC, not the IANA-style negative). UTC's all-zero blob is
+	// indistinguishable from the EASTimeZone zero value, so use a real
+	// offset to verify decode actually happened.
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skip("zoneinfo unavailable")
+	}
+	tz := EncodeTimeZone(loc)
+	parseCalendarField(&out, wbxml.E(wbxml.PageCalendar, "TimeZone", wbxml.Text(tz)))
+	if out.TimeZoneRaw != tz {
+		t.Error("TimeZoneRaw not stored")
+	}
+	if out.TimeZone == (EASTimeZone{}) {
+		t.Error("TimeZone not decoded (still zero)")
+	}
+}
+
+func TestParseCalendarField_invalidTimezoneIsIgnored(t *testing.T) {
+	out := EventItem{}
+	parseCalendarField(&out, wbxml.E(wbxml.PageCalendar, "TimeZone", wbxml.Text("not-base64-and-not-the-right-length")))
+	if out.TimeZoneRaw == "" {
+		t.Error("Raw should still be stored even when decode fails")
+	}
+	if out.TimeZone != (EASTimeZone{}) {
+		t.Error("TimeZone should remain zero when decode fails")
+	}
+}
+
+func TestBuildEventApp_richDraft(t *testing.T) {
+	start := time.Date(2026, 5, 12, 14, 0, 0, 0, time.UTC)
+	end := start.Add(time.Hour)
+	app := buildEventApp(EventDraft{
+		Subject:     "Planning",
+		Location:    "Conf 5",
+		StartTime:   start,
+		EndTime:     end,
+		AllDayEvent: false,
+		BusyStatus:  2,
+		Sensitivity: 1,
+		Reminder:    15,
+		Body:        "agenda",
+		Attendees: []EventAttendee{
+			{Name: "Bob", Email: "bob@x"},
+			{Email: "carol@x"}, // name omitted intentionally
+		},
+		TimeZone: &EASTimeZone{StandardBias: 0, DaylightBias: -60},
+		Recurrence: &Recurrence{
+			Type:     RecurrenceWeekly,
+			Interval: 1,
+		},
+	})
+	wantText := map[string]string{
+		"Subject":     "Planning",
+		"Location":    "Conf 5",
+		"StartTime":   formatEASTime(start),
+		"EndTime":     formatEASTime(end),
+		"BusyStatus":  "2",
+		"Sensitivity": "1",
+		"Reminder":    "15",
+	}
+	for name, want := range wantText {
+		if el := app.Find(name); el == nil || el.TextContent() != want {
+			t.Errorf("%s = %v, want %q", name, el, want)
+		}
+	}
+	if app.Find("AllDayEvent") != nil {
+		t.Error("AllDayEvent=false should be omitted")
+	}
+	atts := app.Find("Attendees")
+	if atts == nil || len(atts.Children) != 2 {
+		t.Fatalf("Attendees = %v", atts)
+	}
+	if app.Find("TimeZone") == nil {
+		t.Error("TimeZone missing")
+	}
+	if app.Find("Recurrence") == nil {
+		t.Error("Recurrence missing")
+	}
+	if body := app.Find("Body"); body == nil {
+		t.Error("Body missing")
+	} else if data := body.Find("Data"); data == nil || data.TextContent() != "agenda" {
+		t.Errorf("Body/Data = %v", data)
+	}
+}
+
+func TestBuildEventApp_timeZoneRawWinsOverStruct(t *testing.T) {
+	start := time.Date(2026, 5, 12, 14, 0, 0, 0, time.UTC)
+	end := start.Add(time.Hour)
+	app := buildEventApp(EventDraft{
+		Subject:     "X",
+		StartTime:   start,
+		EndTime:     end,
+		TimeZoneRaw: "RAW-TZ-BLOB",
+		TimeZone:    &EASTimeZone{}, // should be ignored when Raw is set
+	})
+	tz := app.Find("TimeZone")
+	if tz == nil || tz.TextContent() != "RAW-TZ-BLOB" {
+		t.Errorf("TimeZone = %v, want RAW-TZ-BLOB", tz)
+	}
+}
+
 func TestParseEventBody_textAndOpaque(t *testing.T) {
 	textBody := wbxml.E(wbxml.PageAirSyncBase, "Body",
 		wbxml.E(wbxml.PageAirSyncBase, "Type", wbxml.Text("1")),
