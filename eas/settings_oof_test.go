@@ -117,6 +117,85 @@ func TestSetOof_emitsTimeBased(t *testing.T) {
 	}
 }
 
+func TestSetDevicePassword_emitsPassword(t *testing.T) {
+	c, cap, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageSettings, "Settings",
+				wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+				wbxml.E(wbxml.PageSettings, "DevicePassword",
+					wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+				),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	if err := c.SetDevicePassword(context.Background(), "s3cret"); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := wbxml.Unmarshal(cap.body, wbxml.DefaultRegistry())
+	pw := req.Root.Find("Password")
+	if pw == nil || pw.TextContent() != "s3cret" {
+		t.Errorf("Password = %v", pw)
+	}
+}
+
+func TestSetDevicePassword_emptyClearsPassword(t *testing.T) {
+	c, cap, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageSettings, "Settings",
+				wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	if err := c.SetDevicePassword(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := wbxml.Unmarshal(cap.body, wbxml.DefaultRegistry())
+	if pw := req.Root.Find("Password"); pw != nil {
+		t.Errorf("empty input should not emit <Password>; got %v", pw)
+	}
+}
+
+func TestSetDevicePassword_topLevelStatusError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageSettings, "Settings",
+				wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("3")),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	if err := c.SetDevicePassword(context.Background(), "x"); err == nil {
+		t.Error("want error for non-OK top-level status")
+	}
+}
+
+func TestSetDevicePassword_nestedStatusError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{
+			Root: wbxml.E(wbxml.PageSettings, "Settings",
+				wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("1")),
+				wbxml.E(wbxml.PageSettings, "DevicePassword",
+					wbxml.E(wbxml.PageSettings, "Status", wbxml.Text("3")),
+				),
+			),
+		}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	if err := c.SetDevicePassword(context.Background(), "x"); err == nil {
+		t.Error("want error for non-OK DevicePassword/Status")
+	}
+}
+
 func TestGetUserInformation_basic(t *testing.T) {
 	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		doc := &wbxml.Document{

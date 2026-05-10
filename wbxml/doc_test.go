@@ -99,8 +99,15 @@ func TestFindAll_documentOrder(t *testing.T) {
 }
 
 func TestNodeInterfaceCompliance(t *testing.T) {
-	// Compile-time-ish checks that each concrete type satisfies Node.
+	// Compile-time check that each concrete type satisfies Node.
 	var _ Node = &Element{}
 	var _ Node = Text("")
 	var _ Node = Opaque(nil)
+
+	// Coverage tooling reports the marker isNode() bodies as 0% unless
+	// they are invoked at runtime. Call each on the concrete type so
+	// the cover tool sees the method entry execute.
+	(&Element{}).isNode()
+	Text("").isNode()
+	Opaque(nil).isNode()
 }

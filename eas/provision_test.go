@@ -98,6 +98,64 @@ func TestProvision_topLevelStatusError(t *testing.T) {
 	}
 }
 
+func TestRemoteWipeRequested(t *testing.T) {
+	if RemoteWipeRequested(nil) {
+		t.Error("nil doc should be false")
+	}
+	if RemoteWipeRequested(&wbxml.Document{}) {
+		t.Error("nil root should be false")
+	}
+	noWipe := &wbxml.Document{Root: wbxml.E(wbxml.PageProvision, "Provision",
+		wbxml.E(wbxml.PageProvision, "Status", wbxml.Text("1")),
+	)}
+	if RemoteWipeRequested(noWipe) {
+		t.Error("absent <RemoteWipe> should be false")
+	}
+	withWipe := &wbxml.Document{Root: wbxml.E(wbxml.PageProvision, "Provision",
+		wbxml.E(wbxml.PageProvision, "Status", wbxml.Text("1")),
+		wbxml.E(wbxml.PageProvision, "RemoteWipe"),
+	)}
+	if !RemoteWipeRequested(withWipe) {
+		t.Error("present <RemoteWipe> should be true")
+	}
+}
+
+func TestAcknowledgeRemoteWipe_emitsStatus(t *testing.T) {
+	c, cap, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageProvision, "Provision",
+			wbxml.E(wbxml.PageProvision, "Status", wbxml.Text("1")),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	if err := c.AcknowledgeRemoteWipe(context.Background(), 0); err != nil { // 0 → defaults to 1
+		t.Fatal(err)
+	}
+	req, _ := wbxml.Unmarshal(cap.body, wbxml.DefaultRegistry())
+	wipe := req.Root.Find("RemoteWipe")
+	if wipe == nil {
+		t.Fatal("missing <RemoteWipe>")
+	}
+	if st := wipe.Find("Status"); st == nil || st.TextContent() != "1" {
+		t.Errorf("Status = %v, want 1 (default)", st)
+	}
+}
+
+func TestAcknowledgeRemoteWipe_serverError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageProvision, "Provision",
+			wbxml.E(wbxml.PageProvision, "Status", wbxml.Text("3")),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	if err := c.AcknowledgeRemoteWipe(context.Background(), 2); err == nil {
+		t.Error("want error for non-OK status")
+	}
+}
+
 func TestProvision_missingPolicyKey(t *testing.T) {
 	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		resp := &wbxml.Document{

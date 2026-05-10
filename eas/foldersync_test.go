@@ -179,9 +179,26 @@ func TestFolderSync_propagatesNonRetryableStatusError(t *testing.T) {
 
 func TestFolderType_String(t *testing.T) {
 	cases := map[FolderType]string{
-		FolderTypeInbox:    "Inbox",
-		FolderTypeCalendar: "Calendar",
-		FolderType(99):     "FolderType(99)",
+		FolderTypeUserGeneric:    "UserGeneric",
+		FolderTypeInbox:          "Inbox",
+		FolderTypeDrafts:         "Drafts",
+		FolderTypeDeletedItems:   "DeletedItems",
+		FolderTypeSentItems:      "SentItems",
+		FolderTypeOutbox:         "Outbox",
+		FolderTypeTasks:          "Tasks",
+		FolderTypeCalendar:       "Calendar",
+		FolderTypeContacts:       "Contacts",
+		FolderTypeNotes:          "Notes",
+		FolderTypeJournal:        "Journal",
+		FolderTypeUserMail:       "UserMail",
+		FolderTypeUserCalendar:   "UserCalendar",
+		FolderTypeUserContacts:   "UserContacts",
+		FolderTypeUserTasks:      "UserTasks",
+		FolderTypeUserJournal:    "UserJournal",
+		FolderTypeUserNotes:      "UserNotes",
+		FolderTypeUnknown:        "Unknown",
+		FolderTypeRecipientCache: "RecipientCache",
+		FolderType(99):           "FolderType(99)",
 	}
 	for ft, want := range cases {
 		if got := ft.String(); got != want {

@@ -194,6 +194,40 @@ func TestRespondInvite_basic(t *testing.T) {
 	}
 }
 
+func TestParseEventBody_textAndOpaque(t *testing.T) {
+	textBody := wbxml.E(wbxml.PageAirSyncBase, "Body",
+		wbxml.E(wbxml.PageAirSyncBase, "Type", wbxml.Text("1")),
+		wbxml.E(wbxml.PageAirSyncBase, "Data", wbxml.Text("plain body")),
+	)
+	out := EventItem{}
+	parseEventBody(&out, textBody)
+	if out.BodyType != BodyTypePlain || out.Body != "plain body" {
+		t.Errorf("text body: got %+v", out)
+	}
+
+	opaqueBody := wbxml.E(wbxml.PageAirSyncBase, "Body",
+		wbxml.E(wbxml.PageAirSyncBase, "Type", wbxml.Text("4")),
+		wbxml.E(wbxml.PageAirSyncBase, "Data", wbxml.Opaque([]byte("MIME bytes"))),
+	)
+	out2 := EventItem{}
+	parseEventBody(&out2, opaqueBody)
+	if out2.BodyType != BodyTypeMIME || out2.Body != "MIME bytes" {
+		t.Errorf("opaque body: got %+v", out2)
+	}
+}
+
+func TestParseEventBody_skipsOtherCodepages(t *testing.T) {
+	body := wbxml.E(wbxml.PageAirSyncBase, "Body",
+		// Wrong codepage — must be ignored.
+		wbxml.E(wbxml.PageCalendar, "Type", wbxml.Text("99")),
+	)
+	out := EventItem{}
+	parseEventBody(&out, body)
+	if out.BodyType != 0 {
+		t.Errorf("expected zero BodyType, got %v", out.BodyType)
+	}
+}
+
 func TestFormatEASTime(t *testing.T) {
 	t1 := time.Date(2024, 1, 15, 12, 34, 56, 0, time.UTC)
 	got := formatEASTime(t1)

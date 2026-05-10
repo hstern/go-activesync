@@ -50,6 +50,26 @@ func TestStatusError_message(t *testing.T) {
 	}
 }
 
+func TestStatusName_allMapped(t *testing.T) {
+	cases := map[int]string{
+		1: "OK", 2: "ProtocolError", 3: "InvalidSyncKey", 4: "ProtocolError",
+		5: "ServerError", 6: "ConversionError", 7: "ConflictMatchingClientServer",
+		8: "ObjectNotFound", 9: "OutOfSpace", 12: "ServerError", 13: "ServerError",
+		14: "InvalidArguments", 101: "InvalidContent", 102: "InvalidWBXML",
+		103: "InvalidXML", 110: "ServerError", 141: "DeviceNotProvisioned",
+		142: "PolicyRefresh", 143: "InvalidPolicyKey",
+		144: "ExternallyManagedDevicesNotAllowed", 145: "NoRecurrenceInCalendar",
+		177: "ItemNotFoundInCollection",
+		// Unknown code: empty so the StatusError formatter falls back to just the number.
+		9999: "",
+	}
+	for code, want := range cases {
+		if got := statusName(code); got != want {
+			t.Errorf("statusName(%d) = %q, want %q", code, got, want)
+		}
+	}
+}
+
 func TestIsStatusCode(t *testing.T) {
 	e := &StatusError{Code: 143}
 	if !IsStatusCode(e, 143) {
