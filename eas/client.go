@@ -33,7 +33,9 @@ type Config struct {
 	// DeviceID is a 32-hex-char client identifier. Required; create once
 	// per account and persist (the server treats a new ID as a new device).
 	DeviceID string
-	// DeviceType is sent in the URL query and policy doc. Default "MCP".
+	// DeviceType is sent in the URL query and policy doc. Default
+	// "GoActiveSync". Some servers log this string in admin tools;
+	// callers usually want to override with their app's name.
 	DeviceType string
 	// ASVersion is the protocol version sent in MS-ASProtocolVersion.
 	// Default "14.1".
@@ -112,7 +114,7 @@ func NewClient(cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("eas: ServerURL must be http or https, got %q", u.Scheme)
 	}
 	if cfg.DeviceType == "" {
-		cfg.DeviceType = "MCP"
+		cfg.DeviceType = "GoActiveSync"
 	}
 	if cfg.ASVersion == "" {
 		cfg.ASVersion = "14.1"

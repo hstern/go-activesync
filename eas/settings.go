@@ -16,10 +16,11 @@ import (
 // Strict Exchange servers will reject Provision otherwise; Z-Push and
 // SOGo are lenient but accept the call as a no-op.
 //
-// All fields default to empty strings if unset; the Manager fills sensible
-// defaults from the account config.
+// All fields default to empty strings if unset. The library sends what
+// the caller provides; callers typically set Model + FriendlyName at
+// minimum so the server can identify the client in its admin tools.
 type DeviceInformation struct {
-	Model          string // device model name (e.g. "MCP")
+	Model          string // device model name (e.g. "iPhone15,3")
 	IMEI           string // device IMEI; rarely meaningful for non-phone clients
 	FriendlyName   string // human-friendly device name
 	OS             string // device operating system (e.g. "darwin/amd64")
@@ -28,7 +29,7 @@ type DeviceInformation struct {
 	MobileOperator string
 	UserAgent      string
 	// EnableOutboundSMS reports whether the device can send SMS via the
-	// EAS server's SMS bridge. Always false for activesync-mcp.
+	// EAS server's SMS bridge. False for non-phone clients.
 	EnableOutboundSMS bool
 }
 

@@ -11,9 +11,12 @@ import (
 // Provision exchange. It captures every field defined by MS-ASPROV §2.2.2
 // for protocol versions 12.x–14.x.
 //
-// activesync-mcp is not a real device and cannot enforce most fields.
-// The Policy is exposed so callers can inspect what the server expects
-// (and refuse to operate when policy clashes with their security posture).
+// Most fields describe constraints a real device would enforce
+// (password rules, camera/storage/Bluetooth allowances, attachment
+// limits). A library client can rarely enforce them directly; the
+// Policy is exposed so callers can inspect what the server expects
+// and refuse to operate when policy clashes with their security
+// posture.
 type Policy struct {
 	// Password / lock policy.
 	DevicePasswordEnabled              bool

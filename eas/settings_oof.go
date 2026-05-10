@@ -200,9 +200,10 @@ type UserAccount struct {
 // device-lock policy. EAS uses this to record password compliance
 // when the policy requires DevicePasswordEnabled.
 //
-// Pass an empty newPassword to clear (Reset). For activesync-mcp this
-// is mostly a no-op compliance signal; we don't actually lock the
-// machine, but reporting compliance keeps strict servers happy.
+// Pass an empty newPassword to clear (Reset). For non-device clients
+// (sync daemons, headless agents) this is mostly a no-op compliance
+// signal — the caller can't actually lock the host — but reporting
+// compliance keeps strict servers happy.
 func (c *Client) SetDevicePassword(ctx context.Context, newPassword string) error {
 	set := wbxml.E(wbxml.PageSettings, "Set")
 	if newPassword != "" {

@@ -139,11 +139,6 @@ See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 ## Used by
 
-A reference consumer (an MCP server that exposes ActiveSync to Claude)
-is in development; it shows how to wire the `StateStore` interface to
-bbolt and how to manage per-account credentials with the OS keyring.
-Link will land here once it's published.
-
 If you're building on top of this library and want to be listed, open
 a PR adding yourself.
 

@@ -141,9 +141,10 @@ func topStatus(root *wbxml.Element) int {
 // has been (or will be) carried out, after which the server will refuse
 // further commands until a new device id provisions cleanly.
 //
-// activesync-mcp is not a real device so it never carries out a wipe;
-// the caller (the MCP server) typically just deletes any locally
-// persisted state for the account.
+// Non-device callers (sync daemons, server-side agents) typically
+// can't carry out a wipe in any literal sense; the conventional
+// response is to delete any locally persisted state for the account
+// before acknowledging.
 func RemoteWipeRequested(provisionResp *wbxml.Document) bool {
 	if provisionResp == nil || provisionResp.Root == nil {
 		return false
@@ -154,9 +155,10 @@ func RemoteWipeRequested(provisionResp *wbxml.Document) bool {
 // AcknowledgeRemoteWipe sends a Provision request that confirms the
 // wipe was performed (Status=1). Use status=2 to report failure.
 //
-// This is a separate helper because policy is application-level: the
-// MCP server may want to delete bbolt state, the keyring entry, etc.
-// before acknowledging.
+// This is a separate helper because the cleanup the caller wants to
+// perform first is application-level: deleting per-account persistent
+// state (sync keys, cached credentials, attachment caches, etc.)
+// before acknowledging the wipe.
 func (c *Client) AcknowledgeRemoteWipe(ctx context.Context, status int) error {
 	if status == 0 {
 		status = 1 // assume success if unspecified

@@ -93,7 +93,7 @@ func TestNewClient_defaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.cfg.DeviceType != "MCP" {
+	if c.cfg.DeviceType != "GoActiveSync" {
 		t.Errorf("DeviceType: %q", c.cfg.DeviceType)
 	}
 	if c.cfg.ASVersion != "14.1" {
@@ -131,7 +131,7 @@ func TestPost_buildsURLAndHeaders(t *testing.T) {
 	if q.Get("DeviceId") != "abcdef0123456789abcdef0123456789" {
 		t.Errorf("DeviceId: %q", q.Get("DeviceId"))
 	}
-	if q.Get("DeviceType") != "MCP" {
+	if q.Get("DeviceType") != "GoActiveSync" {
 		t.Errorf("DeviceType: %q", q.Get("DeviceType"))
 	}
 	if got := cap.headers.Get("Content-Type"); got != "application/vnd.ms-sync.wbxml" {

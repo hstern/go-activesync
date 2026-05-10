@@ -9,7 +9,7 @@ digraph architecture {
     node [fontname="Helvetica", fontsize=11, shape=box, style="rounded,filled"];
     edge [fontname="Helvetica", fontsize=10];
 
-    caller [label="Your application\n(or activesync-mcp)", fillcolor="#e7f3fe"];
+    caller [label="Your application", fillcolor="#e7f3fe"];
 
     subgraph cluster_lib {
         label="github.com/hstern/go-activesync";

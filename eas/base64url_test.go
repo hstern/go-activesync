@@ -12,7 +12,7 @@ import (
 )
 
 func TestBuildBase64Query_layout(t *testing.T) {
-	encoded, err := buildBase64Query("14.1", "FolderSync", "DEV1234", "MCP", "POL")
+	encoded, err := buildBase64Query("14.1", "FolderSync", "DEV1234", "DEV", "POL")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,10 +40,10 @@ func TestBuildBase64Query_layout(t *testing.T) {
 	// device type length + value
 	off := 5 + int(idLen)
 	dtLen := raw[off]
-	if int(dtLen) != len("MCP") {
+	if int(dtLen) != len("DEV") {
 		t.Errorf("dtLen = %d", dtLen)
 	}
-	if string(raw[off+1:off+1+int(dtLen)]) != "MCP" {
+	if string(raw[off+1:off+1+int(dtLen)]) != "DEV" {
 		t.Errorf("device type = %q", raw[off+1:off+1+int(dtLen)])
 	}
 	off += 1 + int(dtLen)

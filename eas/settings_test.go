@@ -28,8 +28,8 @@ func TestSettingsDeviceInformation_request(t *testing.T) {
 	})
 
 	err := c.SettingsDeviceInformation(context.Background(), DeviceInformation{
-		Model:        "MCP",
-		FriendlyName: "activesync-mcp",
+		Model:        "GoTestModel",
+		FriendlyName: "go-activesync test",
 		OS:           "darwin",
 		UserAgent:    "go-activesync/0.1",
 	})
@@ -48,7 +48,7 @@ func TestSettingsDeviceInformation_request(t *testing.T) {
 	if set == nil {
 		t.Fatal("Set missing")
 	}
-	if m := set.Find("Model"); m == nil || m.TextContent() != "MCP" {
+	if m := set.Find("Model"); m == nil || m.TextContent() != "GoTestModel" {
 		t.Errorf("Model = %v", m)
 	}
 	if ua := set.Find("UserAgent"); ua == nil || ua.TextContent() != "go-activesync/0.1" {
