@@ -113,12 +113,16 @@ jobs:
 
       # Test Analytics: upload junit.xml even when tests fail so flaky
       # / consistently-failing tests show up in Codecov dashboards.
-      - uses: codecov/test-results-action@v1
+      # Use codecov-action@v6 with report_type: test_results — the
+      # standalone test-results-action is deprecated and the unified
+      # action is what Codecov now reads from for the Tests page.
+      - uses: codecov/codecov-action@v6
         if: ${{ !cancelled() }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./junit.xml
           flags: unittests
+          report_type: test_results
           fail_ci_if_error: false
 
   # ------------------------------------------------------------------------
@@ -174,12 +178,13 @@ jobs:
 
       # Surface integration-test analytics separately from unit so
       # Codecov can track Z-Push-flakiness independently of pure-Go bugs.
-      - uses: codecov/test-results-action@v1
+      - uses: codecov/codecov-action@v6
         if: ${{ !cancelled() }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./junit-integration.xml
           flags: integration
+          report_type: test_results
           fail_ci_if_error: false
 
       - name: container logs on failure
