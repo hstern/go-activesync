@@ -231,8 +231,10 @@ func firstOpaque(e *wbxml.Element) []byte {
 }
 
 // parseEASTime parses the ISO-8601 timestamp formats EAS uses. EAS varies
-// between fractional-second and integer-second precision; try the common
-// forms and return zero on failure rather than rejecting the message.
+// between fractional-second and integer-second precision, and Z-Push's
+// CalDAV/CardDAV backends pass through the iCalendar basic form
+// (YYYYMMDDTHHMMSSZ, no separators); try the common forms and return
+// zero on failure rather than rejecting the message.
 func parseEASTime(s string) time.Time {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -243,6 +245,9 @@ func parseEASTime(s string) time.Time {
 		"2006-01-02T15:04:05Z",
 		time.RFC3339Nano,
 		time.RFC3339,
+		"20060102T150405Z", // iCalendar UTC basic form
+		"20060102T150405",  // iCalendar floating basic form
+		"20060102",         // iCalendar all-day date
 	} {
 		if t, err := time.Parse(layout, s); err == nil {
 			return t

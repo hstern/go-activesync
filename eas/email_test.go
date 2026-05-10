@@ -21,6 +21,11 @@ func TestParseEASTime(t *testing.T) {
 		{"   ", "", true},
 		{"2024-01-15T12:34:56.000Z", "2024-01-15T12:34:56Z", false},
 		{"2024-01-15T12:34:56Z", "2024-01-15T12:34:56Z", false},
+		// iCalendar basic forms (Z-Push BackendCalDAV/CardDAV pass these
+		// through unchanged from the underlying VEVENT/VTODO).
+		{"20240115T123456Z", "2024-01-15T12:34:56Z", false},
+		{"20240115T123456", "2024-01-15T12:34:56Z", false},
+		{"20240115", "2024-01-15T00:00:00Z", false},
 		{"junk", "", true},
 	}
 	for _, c := range cases {

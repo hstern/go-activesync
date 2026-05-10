@@ -276,17 +276,22 @@ func TestIntegration_Calendar_CRUD(t *testing.T) {
 	}
 	res, err := c2.SyncCalendar(ctx, calID, eas.CalendarSyncOptions{})
 	mustOK(t, err)
-	found := false
-	for _, ev := range res.Added {
-		if ev.Subject == subject {
-			found = true
-			t.Logf("event visible: id=%s start=%v", ev.ServerID, ev.StartTime)
+	var found *eas.EventItem
+	for i := range res.Added {
+		if res.Added[i].Subject == subject {
+			found = &res.Added[i]
+			t.Logf("event visible: id=%s start=%v", found.ServerID, found.StartTime)
 			break
 		}
 	}
-	if !found {
-		t.Errorf("created event %q not visible after Sync (Added=%d)",
+	if found == nil {
+		t.Fatalf("created event %q not visible after Sync (Added=%d)",
 			subject, len(res.Added))
+	}
+	if found.StartTime.IsZero() {
+		t.Errorf("event StartTime parsed to zero — server emitted an unrecognised time format")
+	} else if !found.StartTime.Equal(start) {
+		t.Errorf("event StartTime = %v, want %v", found.StartTime, start)
 	}
 }
 
