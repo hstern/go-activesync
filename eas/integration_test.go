@@ -46,7 +46,7 @@ func mustEnv(t *testing.T, key string) string {
 }
 
 // integrationClient builds a Client wired for the env-supplied server.
-func integrationClient(t *testing.T) *eas.Client {
+func integrationClient(t *testing.T) eas.Client {
 	t.Helper()
 	url := mustEnv(t, "EAS_INTEGRATION_URL")
 	user := mustEnv(t, "EAS_INTEGRATION_USER")
@@ -134,7 +134,7 @@ func TestIntegration_Provision(t *testing.T) {
 
 // provisionedClient returns a freshly-provisioned client ready for
 // data commands.
-func provisionedClient(t *testing.T) *eas.Client {
+func provisionedClient(t *testing.T) eas.Client {
 	t.Helper()
 	c := integrationClient(t)
 	ctx := context.Background()
