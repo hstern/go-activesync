@@ -1,6 +1,7 @@
 # go-activesync
 
 [![ci](https://github.com/hstern/go-activesync/actions/workflows/ci.yml/badge.svg)](https://github.com/hstern/go-activesync/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/hstern/go-activesync/branch/main/graph/badge.svg)](https://codecov.io/gh/hstern/go-activesync)
 [![Go Reference](https://pkg.go.dev/badge/github.com/hstern/go-activesync.svg)](https://pkg.go.dev/github.com/hstern/go-activesync)
 [![Go Report Card](https://goreportcard.com/badge/github.com/hstern/go-activesync)](https://goreportcard.com/report/github.com/hstern/go-activesync)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)

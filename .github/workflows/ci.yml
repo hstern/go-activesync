@@ -92,6 +92,15 @@ jobs:
           path: coverage.out
           if-no-files-found: error
 
+      # Public repos use Codecov's tokenless flow; no CODECOV_TOKEN needed.
+      # Failures are non-fatal — if codecov.io is down or rate-limits us,
+      # the build is still useful.
+      - uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage.out
+          flags: unittests
+          fail_ci_if_error: false
+
   # ------------------------------------------------------------------------
   # Integration tests against a live Z-Push container. Brings up the
   # testenv/ Docker stack, runs `go test -tags integration`, tears down.
