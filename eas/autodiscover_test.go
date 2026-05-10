@@ -382,10 +382,11 @@ func TestAutodiscover_srvLookupError(t *testing.T) {
 		return "", nil, errSentinel("srv broken")
 	}
 	_, err := Autodiscover(context.Background(), "u@x.com", "p", AutodiscoverOptions{
-		HTTPClient:       bad.Client(),
-		Endpoints:        nil, // force default flow
-		SkipHTTPRedirect: true,
-		SRVLookup:        stub,
+		HTTPClient:            bad.Client(),
+		Endpoints:             nil, // force default flow
+		SkipHTTPRedirect:      true,
+		SkipWellKnownFallback: true, // this test is about the SRV-error path
+		SRVLookup:             stub,
 	})
 	if err == nil || !strings.Contains(err.Error(), "srv lookup") {
 		t.Errorf("err = %v", err)
@@ -504,5 +505,123 @@ func TestBuildAutodiscoverRequest_includesEmail(t *testing.T) {
 	}
 	if !strings.Contains(string(b), autodiscoverRespNS) {
 		t.Error("request body missing AcceptableResponseSchema")
+	}
+}
+
+func TestAutodiscoverWellKnown_succeeds(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodOptions {
+			t.Errorf("method = %s, want OPTIONS", r.Method)
+		}
+		w.Header().Set("MS-Server-ActiveSync", "14.0")
+		w.Header().Set("MS-ASProtocolVersions", "12.0,12.1,14.0")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	hc := &http.Client{Transport: rerouteTransport{target: srv.URL, t: srv.Client().Transport}}
+	res, err := autodiscoverWellKnown(t.Context(), hc, "ua", "Basic x", "example.com", slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(res.URL, "/Microsoft-Server-ActiveSync") {
+		t.Errorf("URL = %q, want /Microsoft-Server-ActiveSync suffix", res.URL)
+	}
+	if res.ServerHostname == "" {
+		t.Error("ServerHostname empty")
+	}
+	if res.DisplayName != "" {
+		t.Errorf("DisplayName = %q, want empty (no autodiscover response)", res.DisplayName)
+	}
+}
+
+func TestAutodiscoverWellKnown_rejectsResponseWithoutEASHeader(t *testing.T) {
+	// All three candidate hostnames return 200 OK but no EAS server
+	// header — must be treated as "not EAS" and reported as failure.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	hc := &http.Client{Transport: rerouteTransport{target: srv.URL, t: srv.Client().Transport}}
+	if _, err := autodiscoverWellKnown(t.Context(), hc, "ua", "Basic x", "example.com", slog.Default()); err == nil {
+		t.Error("want error when no candidate carries an EAS server header")
+	}
+}
+
+func TestAutodiscoverWellKnown_sendsAuthHeader(t *testing.T) {
+	want := "Basic " + base64.StdEncoding.EncodeToString([]byte("u@example.com:hunter2"))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != want {
+			t.Errorf("Authorization = %q, want %q", got, want)
+		}
+		w.Header().Set("MS-Server-ActiveSync", "14.0")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	hc := &http.Client{Transport: rerouteTransport{target: srv.URL, t: srv.Client().Transport}}
+	if _, err := autodiscoverWellKnown(t.Context(), hc, "ua", want, "example.com", slog.Default()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAutodiscover_wellKnownFallbackAfterMobilesyncRejected(t *testing.T) {
+	// Simulates a SOGo deployment: POST /Autodiscover/Autodiscover.xml
+	// returns 400 "Not supported xmlns", but OPTIONS the EAS canonical
+	// path is happy. The well-known step should kick in and succeed.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/Autodiscover/Autodiscover.xml"):
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `<?xml version="1.0"?><Autodiscover><Response><Error><ErrorCode>601</ErrorCode><Message>Not supported xmlns</Message></Error></Response></Autodiscover>`)
+		case r.Method == http.MethodOptions && r.URL.Path == "/Microsoft-Server-ActiveSync":
+			w.Header().Set("MS-Server-ActiveSync", "14.0")
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	hc := &http.Client{Transport: rerouteTransport{target: srv.URL, t: srv.Client().Transport}}
+	res, err := Autodiscover(t.Context(), "u@example.com", "pw", AutodiscoverOptions{
+		HTTPClient:       hc,
+		SkipHTTPRedirect: true,
+		SRVLookup: func(context.Context, string, string, string) (string, []*net.SRV, error) {
+			return "", nil, fmt.Errorf("no SRV for test")
+		},
+	})
+	if err != nil {
+		t.Fatalf("Autodiscover: %v", err)
+	}
+	if !strings.HasSuffix(res.URL, "/Microsoft-Server-ActiveSync") {
+		t.Errorf("URL = %q, want /Microsoft-Server-ActiveSync suffix", res.URL)
+	}
+}
+
+func TestAutodiscover_skipWellKnownFallback(t *testing.T) {
+	// When SkipWellKnownFallback is set, the OPTIONS probe must not run
+	// even if every other step has failed.
+	var optionsCount int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			atomic.AddInt32(&optionsCount, 1)
+		}
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer srv.Close()
+	hc := &http.Client{Transport: rerouteTransport{target: srv.URL, t: srv.Client().Transport}}
+	_, err := Autodiscover(t.Context(), "u@example.com", "pw", AutodiscoverOptions{
+		HTTPClient:            hc,
+		SkipHTTPRedirect:      true,
+		SkipSRVLookup:         true,
+		SkipWellKnownFallback: true,
+	})
+	if err == nil {
+		t.Error("want error when every step fails and well-known is disabled")
+	}
+	if n := atomic.LoadInt32(&optionsCount); n != 0 {
+		t.Errorf("OPTIONS calls = %d, want 0", n)
 	}
 }

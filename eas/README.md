@@ -100,6 +100,36 @@ Per-symbol API docs live in [godoc](https://pkg.go.dev/github.com/hstern/go-acti
 token refresh. Pair with `RetryOn401: true` to get a transparent retry on
 token expiry.
 
+## Autodiscover
+
+```go
+res, err := eas.Autodiscover(ctx, "user@example.com", password, eas.AutodiscoverOptions{})
+// res.URL → Config.ServerURL
+```
+
+`Autodiscover` runs five candidate steps in order, matching Outlook's
+flow plus a well-known fallback:
+
+1. `POST https://<domain>/Autodiscover/Autodiscover.xml`
+2. `POST https://autodiscover.<domain>/Autodiscover/Autodiscover.xml`
+3. `GET http://autodiscover.<domain>/...` and follow a 302
+4. SRV record `_autodiscover._tcp.<domain>` → POST to the discovered host
+5. `OPTIONS https://<domain|autodiscover.<domain>|mail.<domain>>/Microsoft-Server-ActiveSync`
+
+Step 5 is the well-known fallback. It handles deployments whose
+autodiscover responder does not speak the EAS `mobilesync` request schema
+(notably SOGo, which historically implements only the Outlook schema and
+rejects mobilesync with HTTP 400 `<ErrorCode>601</ErrorCode>`). When the
+schema-aware attempts all fail, the library probes the canonical EAS
+path with HTTP OPTIONS and accepts any 2xx response carrying an
+`MS-Server-ActiveSync` or `MS-ASProtocolVersions` header. The returned
+`AutodiscoverResult` has `URL` and `ServerHostname` set but no
+`DisplayName` (OPTIONS doesn't carry it).
+
+Each step can be disabled via `AutodiscoverOptions.Skip*` flags. To pin a
+specific endpoint and skip discovery entirely, just set
+`Config.ServerURL` directly and don't call `Autodiscover` at all.
+
 ## State persistence
 
 ```go
@@ -248,6 +278,19 @@ func TestInboxSummary(t *testing.T) {
 Sub-interfaces (`EmailClient`, `CalendarClient`, …) compose into the
 umbrella `Client`; consumers can depend on a slim view if they only
 touch one feature area.
+
+## Server-specific notes
+
+Interop gaps caught by testing against live deployments. The library
+handles each one as gracefully as it can; the symptoms can be confusing
+without the context below.
+
+| Server | Behavior | What the library does |
+|--------|----------|----------------------|
+| **SOGo autodiscover** | The SOGo autodiscover module implements only the Outlook request schema, not EAS `mobilesync`. Returns HTTP 400 `<ErrorCode>601</ErrorCode>` "Not supported xmlns". | `Autodiscover` falls through to the well-known fallback (step 5) and locates the EAS endpoint via an OPTIONS probe. No caller action needed. |
+| **Z-Push BackendIMAP `ResolveRecipients`** | BackendIMAP does not implement the GAL lookup hook, so every `ResolveRecipients` request comes back with EAS Status 5 (ServerError). | The library surfaces a `*StatusError` with `Command=ResolveRecipients Status=5`. There is no library-side workaround for a server that doesn't implement the verb — catch and skip. |
+| **Z-Push BackendIMAP `GetUserInformation`** | Returns the primary email correctly but reports an empty `Accounts` list (no per-account detail). | `UserInformation{PrimaryEmail: …, Accounts: nil}`. Treat the empty slice as expected on Z-Push. |
+| **Z-Push Ping `<Folder>` element shape** | Z-Push (correctly per MS-ASCMD §2.2.2.11.2) sends the changed folder ID as plain text content of `<Folder>`, not the nested `<Folder><Id>…</Id></Folder>` form seen elsewhere in EAS. | The parser handles both shapes. Fixed in v0.2. |
 
 ## See also
 

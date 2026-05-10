@@ -44,6 +44,14 @@ type AutodiscoverOptions struct {
 	// SkipSRVLookup disables option 4 (DNS SRV record fallback). Useful
 	// when DNS is restricted or the lookup is too slow.
 	SkipSRVLookup bool
+	// SkipWellKnownFallback disables option 5 (the well-known EAS path
+	// probe). When every schema-aware Autodiscover attempt fails, the
+	// library tries HTTP OPTIONS against the canonical EAS endpoint at
+	// the bare domain, autodiscover.<domain>, and mail.<domain>. This
+	// handles deployments whose autodiscover responder does not speak the
+	// EAS mobilesync request schema (e.g. SOGo, which historically only
+	// implements the Outlook schema).
+	SkipWellKnownFallback bool
 	// SRVLookup is the DNS SRV resolver. Defaults to net.DefaultResolver.
 	// Tests inject a stub.
 	SRVLookup func(ctx context.Context, service, proto, name string) (string, []*net.SRV, error)
@@ -63,6 +71,11 @@ type AutodiscoverOptions struct {
 //     — expecting a 302 redirect to a https://… URL we then POST to.
 //  4. SRV  _autodiscover._tcp.<domain> — query DNS for the host:port
 //     to POST to.
+//  5. OPTIONS https://<domain>/Microsoft-Server-ActiveSync (and the
+//     autodiscover.<domain> / mail.<domain> variants) — accept any 2xx
+//     response carrying an EAS server header. This is a last-resort
+//     fallback for deployments whose autodiscover service does not
+//     speak the mobilesync schema.
 //
 // Each step can be disabled via AutodiscoverOptions. The password is
 // required because Autodiscover responses are authenticated; this
@@ -153,10 +166,64 @@ func Autodiscover(ctx context.Context, email, password string, opts Autodiscover
 		}
 	}
 
+	// Step 5: well-known EAS path probe via OPTIONS. Only runs when the
+	// caller hasn't pinned an explicit endpoint list.
+	if !opts.SkipWellKnownFallback && opts.Endpoints == nil {
+		out, err := autodiscoverWellKnown(ctx, hc, ua, auth, domain, logger)
+		if err == nil {
+			return out, nil
+		}
+		lastErr = fmt.Errorf("well-known: %w", err)
+	}
+
 	if lastErr == nil {
 		lastErr = errors.New("no endpoints attempted")
 	}
 	return nil, fmt.Errorf("eas: Autodiscover: %w", lastErr)
+}
+
+// autodiscoverWellKnown probes the canonical EAS path with HTTP OPTIONS
+// across a small set of plausible hostnames. Used when the
+// schema-aware autodiscover responder is missing or doesn't understand
+// the mobilesync request schema (e.g. SOGo).
+func autodiscoverWellKnown(ctx context.Context, hc *http.Client, ua, auth, domain string, logger *slog.Logger) (*AutodiscoverResult, error) {
+	hosts := []string{
+		domain,
+		"autodiscover." + domain,
+		"mail." + domain,
+	}
+	var lastErr error
+	for _, host := range hosts {
+		ep := "https://" + host + "/Microsoft-Server-ActiveSync"
+		logger.Debug("autodiscover try", "step", "well-known", "endpoint", ep)
+		req, err := http.NewRequestWithContext(ctx, http.MethodOptions, ep, nil)
+		if err != nil {
+			lastErr = fmt.Errorf("%s: %w", ep, err)
+			continue
+		}
+		req.Header.Set("User-Agent", ua)
+		req.Header.Set("Authorization", auth)
+		resp, err := hc.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("%s: %w", ep, err)
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 &&
+			(resp.Header.Get("MS-Server-ActiveSync") != "" ||
+				resp.Header.Get("MS-ASProtocolVersions") != "") {
+			u, _ := url.Parse(ep)
+			return &AutodiscoverResult{
+				URL:            ep,
+				ServerHostname: u.Hostname(),
+			}, nil
+		}
+		lastErr = fmt.Errorf("%s: HTTP %d (no EAS server header)", ep, resp.StatusCode)
+	}
+	if lastErr == nil {
+		lastErr = errors.New("no well-known candidates probed")
+	}
+	return nil, lastErr
 }
 
 // autodiscoverPost posts the Autodiscover XML body to one URL and
