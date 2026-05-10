@@ -223,10 +223,14 @@ wbxml/                     WBXML codec (public API)
   codepages.go             EAS code page registry
   reader.go / writer.go    token-level I/O
   README.md                package landing page
-testenv/                   integration test target (Docker)
-  Dockerfile.zpush         Z-Push + Dovecot + Postfix + Radicale
-  zpush-patch.sh           sed-patches stock Z-Push configs
-  README.md                stack details and troubleshooting
+testenv/                   integration test targets (Docker), umbrella
+  Makefile                 delegates to STACK= (default zpush)
+  README.md                stack inventory and quick start
+  zpush/                   Z-Push 2.7 + Dovecot + Postfix + Radicale
+    Dockerfile.zpush       container build
+    zpush-patch.sh         sed-patches stock Z-Push configs
+    Makefile               per-stack up/down/test/probe targets
+    README.md              stack details and troubleshooting
 diagrams/                  top-level architecture diagram
 .github/workflows/         CI (lint + test + integration + codeql + release)
 Makefile                   `make ci`, `make test`, `make svg`, …
