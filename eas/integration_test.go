@@ -336,14 +336,21 @@ func TestIntegration_Tasks_CRUD(t *testing.T) {
 	for i := range res.Added {
 		if res.Added[i].Subject == subject {
 			found = &res.Added[i]
-			t.Logf("task visible: id=%s due=%v complete=%v",
-				found.ServerID, found.DueDate, found.Complete)
+			t.Logf("task visible: id=%s utcdue=%v complete=%v",
+				found.ServerID, found.UTCDueDate, found.Complete)
 			break
 		}
 	}
 	if found == nil {
 		t.Fatalf("created task %q not visible after Sync (Added=%d)",
 			subject, len(res.Added))
+	}
+	// Z-Push BackendCalDAV writes the iCalendar VTODO DUE field as UTC
+	// and only echoes back UtcDueDate on subsequent syncs (DueDate
+	// requires the client's local timezone, which the server lacks).
+	// Asserting on UTCDueDate documents this behaviour.
+	if !found.UTCDueDate.Equal(due) {
+		t.Errorf("UTCDueDate = %v, want %v", found.UTCDueDate, due)
 	}
 }
 

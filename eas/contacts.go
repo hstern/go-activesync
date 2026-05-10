@@ -310,9 +310,6 @@ func (c *Client) addItemViaSync(ctx context.Context, folderID string, app *wbxml
 	if folderID == "" {
 		return "", errors.New("eas: addItemViaSync: folderID is required")
 	}
-	if err := c.ensureSynced(ctx, folderID); err != nil {
-		return "", err
-	}
 	clientID := orRandomID("")
 	cmds := wbxml.E(wbxml.PageAirSync, "Commands",
 		wbxml.E(wbxml.PageAirSync, "Add",
@@ -320,7 +317,7 @@ func (c *Client) addItemViaSync(ctx context.Context, folderID string, app *wbxml
 			app,
 		),
 	)
-	resp, err := c.sendSyncCommands(ctx, folderID, cmds)
+	resp, err := c.sendSyncCommandsWithReset(ctx, folderID, cmds)
 	if err != nil {
 		return "", err
 	}
@@ -349,16 +346,13 @@ func (c *Client) changeItemViaSync(ctx context.Context, folderID, serverID strin
 	if folderID == "" || serverID == "" {
 		return errors.New("eas: changeItemViaSync: folderID and serverID are required")
 	}
-	if err := c.ensureSynced(ctx, folderID); err != nil {
-		return err
-	}
 	cmds := wbxml.E(wbxml.PageAirSync, "Commands",
 		wbxml.E(wbxml.PageAirSync, "Change",
 			wbxml.E(wbxml.PageAirSync, "ServerId", wbxml.Text(serverID)),
 			app,
 		),
 	)
-	_, err := c.sendSyncCommands(ctx, folderID, cmds)
+	_, err := c.sendSyncCommandsWithReset(ctx, folderID, cmds)
 	return err
 }
 
@@ -366,16 +360,36 @@ func (c *Client) deleteItemViaSync(ctx context.Context, folderID, serverID strin
 	if folderID == "" || serverID == "" {
 		return errors.New("eas: deleteItemViaSync: folderID and serverID are required")
 	}
-	if err := c.ensureSynced(ctx, folderID); err != nil {
-		return err
-	}
 	cmds := wbxml.E(wbxml.PageAirSync, "Commands",
 		wbxml.E(wbxml.PageAirSync, "Delete",
 			wbxml.E(wbxml.PageAirSync, "ServerId", wbxml.Text(serverID)),
 		),
 	)
-	_, err := c.sendSyncCommands(ctx, folderID, cmds)
+	_, err := c.sendSyncCommandsWithReset(ctx, folderID, cmds)
 	return err
+}
+
+// sendSyncCommandsWithReset wraps sendSyncCommands with the same
+// bootstrap + InvalidSyncKey reset-and-retry semantics SyncCalendar
+// and ApplyEmailChanges already use. Without this, a stale SyncKey
+// (e.g. another device on the same account rotated state) made every
+// CreateEvent / UpdateContact / DeleteTask hard-fail until the caller
+// manually reset and re-bootstrapped.
+func (c *Client) sendSyncCommandsWithReset(ctx context.Context, folderID string, cmds *wbxml.Element) (*wbxml.Element, error) {
+	if err := c.ensureSynced(ctx, folderID); err != nil {
+		return nil, err
+	}
+	resp, err := c.sendSyncCommands(ctx, folderID, cmds)
+	if err == nil || !IsStatusCode(err, StatusInvalidSyncKey) {
+		return resp, err
+	}
+	if rerr := c.cfg.State.SetSyncKey(ctx, folderID, "0"); rerr != nil {
+		return nil, fmt.Errorf("eas: reset sync key: %w", rerr)
+	}
+	if rerr := c.ensureSynced(ctx, folderID); rerr != nil {
+		return nil, rerr
+	}
+	return c.sendSyncCommands(ctx, folderID, cmds)
 }
 
 // genericSyncFolder issues a Sync request for a non-email folder class

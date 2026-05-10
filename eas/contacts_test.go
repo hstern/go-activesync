@@ -8,6 +8,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -310,6 +311,49 @@ func TestParseContactItem_invalidPictureB64IsIgnored(t *testing.T) {
 	got := parseContactItem("c-1", app)
 	if got.Picture != nil {
 		t.Errorf("Picture = %v, want nil for invalid base64", got.Picture)
+	}
+}
+
+// TestAddItemViaSync_invalidSyncKeyRetries: the per-item Sync helpers
+// must reset and replay on Status=3, matching the recovery semantics of
+// SyncCalendar / ApplyEmailChanges. Without this, a stale per-folder
+// SyncKey (e.g. another device on the same account rotated state)
+// makes every CreateContact / UpdateTask / DeleteEvent hard-fail.
+func TestAddItemViaSync_invalidSyncKeyRetries(t *testing.T) {
+	var (
+		mu    sync.Mutex
+		calls int
+	)
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		calls++
+		this := calls
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		switch this {
+		case 1: // first sendSyncCommands → Status=3
+			doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+				wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("3")),
+			)}
+			body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+			w.Write(body)
+		case 2: // re-bootstrap (ensureSynced)
+			w.Write(pimSyncResponse("contacts", "RESET-1"))
+		default: // replay succeeds with the new key
+			w.Write(pimSyncResponse("contacts", "RESET-2"))
+		}
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "contacts", "STALE")
+	if _, err := c.CreateContact(context.Background(), "contacts", ContactDraft{
+		FirstName: "Alice",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != 3 {
+		t.Errorf("calls = %d, want 3 (status3 → bootstrap → replay)", got)
 	}
 }
 
