@@ -80,8 +80,17 @@ jobs:
       - name: build
         run: go build ./...
 
-      - name: test (race + coverage)
-        run: go test -race -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+      # gotestsum wraps `go test` and emits JUnit XML alongside the
+      # standard Go output. Codecov's test-results-action ingests that
+      # JUnit file for Test Analytics (flaky-test detection, per-test
+      # duration trends) — a separate product from coverage.
+      - name: install gotestsum
+        run: go install gotest.tools/gotestsum@latest
+
+      - name: test (race + coverage + junit)
+        run: |
+          gotestsum --junitfile junit.xml -- \
+            -race -count=1 -covermode=atomic -coverprofile=coverage.out ./...
 
       - name: coverage summary
         run: go tool cover -func=coverage.out | tail -5
@@ -99,6 +108,16 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.out
+          flags: unittests
+          fail_ci_if_error: false
+
+      # Test Analytics: upload junit.xml even when tests fail so flaky
+      # / consistently-failing tests show up in Codecov dashboards.
+      - uses: codecov/test-results-action@v1
+        if: ${{ !cancelled() }}
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./junit.xml
           flags: unittests
           fail_ci_if_error: false
 
@@ -139,6 +158,9 @@ jobs:
             exit 1
           fi
 
+      - name: install gotestsum
+        run: go install gotest.tools/gotestsum@latest
+
       - name: integration tests
         env:
           EAS_INTEGRATION_URL: http://localhost:8580/Microsoft-Server-ActiveSync
@@ -146,7 +168,19 @@ jobs:
           EAS_INTEGRATION_PASS: integration
           EAS_INTEGRATION_DEVICE: integration00000000000000000000
           EAS_INTEGRATION_VERSION: "14.0"
-        run: go test -tags integration -v -count=1 -timeout 5m ./eas
+        run: |
+          gotestsum --junitfile junit-integration.xml -- \
+            -tags integration -count=1 -timeout 5m ./eas
+
+      # Surface integration-test analytics separately from unit so
+      # Codecov can track Z-Push-flakiness independently of pure-Go bugs.
+      - uses: codecov/test-results-action@v1
+        if: ${{ !cancelled() }}
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./junit-integration.xml
+          flags: integration
+          fail_ci_if_error: false
 
       - name: container logs on failure
         if: failure()
