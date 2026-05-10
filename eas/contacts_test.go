@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hstern/go-activesync/wbxml"
 )
@@ -200,6 +201,105 @@ func TestParseContactItem_nilSafe(t *testing.T) {
 	got := parseContactItem("only-id", nil)
 	if got.ServerID != "only-id" {
 		t.Errorf("ServerID = %q", got.ServerID)
+	}
+}
+
+// TestParseContactItem_Contacts2Page covers the second codepage (NickName,
+// IMAddress*, ManagerName, GovernmentID, CustomerID) which the
+// allFields test only stocked from the primary Contacts page.
+func TestParseContactItem_Contacts2Page(t *testing.T) {
+	app := wbxml.E(wbxml.PageAirSync, "ApplicationData",
+		wbxml.E(wbxml.PageContacts2, "NickName", wbxml.Text("Ali")),
+		wbxml.E(wbxml.PageContacts2, "IMAddress", wbxml.Text("aim:ali")),
+		wbxml.E(wbxml.PageContacts2, "IMAddress2", wbxml.Text("xmpp:ali@x")),
+		wbxml.E(wbxml.PageContacts2, "IMAddress3", wbxml.Text("matrix:@ali")),
+		wbxml.E(wbxml.PageContacts2, "ManagerName", wbxml.Text("Bob")),
+		wbxml.E(wbxml.PageContacts2, "GovernmentId", wbxml.Text("SIN-1")),
+		wbxml.E(wbxml.PageContacts2, "CustomerId", wbxml.Text("CUST-1")),
+	)
+	got := parseContactItem("c-3", app)
+	if got.NickName != "Ali" || got.IMAddress != "aim:ali" || got.IMAddress2 != "xmpp:ali@x" ||
+		got.IMAddress3 != "matrix:@ali" || got.ManagerName != "Bob" ||
+		got.GovernmentID != "SIN-1" || got.CustomerID != "CUST-1" {
+		t.Errorf("got %+v", got)
+	}
+}
+
+func TestBuildContactApp_emitsAllFields(t *testing.T) {
+	d := ContactDraft{
+		FirstName:       "Alice",
+		LastName:        "Engineer",
+		MiddleName:      "Q",
+		Title:           "Dr.",
+		Suffix:          "PhD",
+		FileAs:          "Engineer, Alice",
+		CompanyName:     "Acme",
+		Department:      "R&D",
+		JobTitle:        "Staff",
+		OfficeLocation:  "HQ",
+		Email1Address:   "a@x",
+		Email2Address:   "a@y",
+		Email3Address:   "a@z",
+		HomePhone:       "1",
+		BusinessPhone:   "2",
+		MobilePhone:     "3",
+		WebPage:         "https://a",
+		HomeAddress:     ContactAddress{Street: "1 Home", City: "HC", State: "HS", PostalCode: "H0H", Country: "Canada"},
+		BusinessAddress: ContactAddress{Street: "9 Biz", City: "BC", State: "BS", PostalCode: "B0B", Country: "USA"},
+		Birthday:        time.Date(1990, 4, 15, 0, 0, 0, 0, time.UTC),
+		Anniversary:     time.Date(2018, 6, 12, 0, 0, 0, 0, time.UTC),
+		Picture:         []byte{0x01, 0x02, 0x03},
+		Categories:      []string{"vip", "work"},
+		NickName:        "Ali",
+		IMAddress:       "aim:ali",
+		ManagerName:     "Bob",
+		GovernmentID:    "SIN-1",
+	}
+	app := buildContactApp(d)
+	wantText := map[string]string{
+		"FirstName":             "Alice",
+		"LastName":              "Engineer",
+		"MiddleName":            "Q",
+		"Title":                 "Dr.",
+		"Suffix":                "PhD",
+		"FileAs":                "Engineer, Alice",
+		"CompanyName":           "Acme",
+		"Department":            "R&D",
+		"JobTitle":              "Staff",
+		"OfficeLocation":        "HQ",
+		"Email1Address":         "a@x",
+		"Email2Address":         "a@y",
+		"Email3Address":         "a@z",
+		"HomePhoneNumber":       "1",
+		"BusinessPhoneNumber":   "2",
+		"MobilePhoneNumber":     "3",
+		"WebPage":               "https://a",
+		"HomeAddressStreet":     "1 Home",
+		"HomeAddressCity":       "HC",
+		"HomeAddressState":      "HS",
+		"HomeAddressPostalCode": "H0H",
+		"HomeAddressCountry":    "Canada",
+		"BusinessAddressStreet": "9 Biz",
+		"NickName":              "Ali",
+		"IMAddress":             "aim:ali",
+		"ManagerName":           "Bob",
+		"GovernmentId":          "SIN-1",
+	}
+	for name, want := range wantText {
+		if el := app.Find(name); el == nil || el.TextContent() != want {
+			t.Errorf("buildContactApp <%s> = %v, want %q", name, el, want)
+		}
+	}
+	// Birthday + Anniversary go through formatEASTime.
+	if app.Find("Birthday") == nil || app.Find("Anniversary") == nil {
+		t.Error("date fields missing")
+	}
+	if pic := app.Find("Picture"); pic == nil || pic.TextContent() == "" {
+		t.Error("Picture missing or not base64-encoded")
+	}
+	cats := app.Find("Categories")
+	if cats == nil || len(cats.Children) != 2 {
+		t.Errorf("Categories = %v", cats)
 	}
 }
 

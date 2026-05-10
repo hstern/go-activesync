@@ -61,6 +61,61 @@ func eventAdd(serverID, subject string, start, end time.Time) *wbxml.Element {
 	)
 }
 
+// TestSyncCalendar_emptyResponse: an empty body decodes to nil resp,
+// which the caller treats as "no changes" (return current key).
+func TestSyncCalendar_emptyResponse(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		// Empty body → nil resp on decode.
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "cal", "K1")
+	res, err := c.SyncCalendar(context.Background(), "cal", CalendarSyncOptions{NoBootstrap: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.SyncKey != "K1" {
+		t.Errorf("SyncKey = %q, want K1", res.SyncKey)
+	}
+}
+
+// TestSyncCalendar_topLevelStatusError: server reports a non-OK status
+// at the Sync root → caller gets a StatusError.
+func TestSyncCalendar_topLevelStatusError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+			wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("110")), // ServerError
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "cal", "K1")
+	if _, err := c.SyncCalendar(context.Background(), "cal", CalendarSyncOptions{NoBootstrap: true}); err == nil {
+		t.Error("want StatusError")
+	}
+}
+
+// TestSyncCalendar_perCollectionStatusError: top is OK but the inner
+// Collection/Status reports a non-OK code.
+func TestSyncCalendar_perCollectionStatusError(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		doc := &wbxml.Document{Root: wbxml.E(wbxml.PageAirSync, "Sync",
+			wbxml.E(wbxml.PageAirSync, "Collections",
+				wbxml.E(wbxml.PageAirSync, "Collection",
+					wbxml.E(wbxml.PageAirSync, "Status", wbxml.Text("8")), // ObjectNotFound
+				),
+			),
+		)}
+		body, _ := wbxml.Marshal(doc, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	_ = c.cfg.State.SetSyncKey(context.Background(), "cal", "K1")
+	if _, err := c.SyncCalendar(context.Background(), "cal", CalendarSyncOptions{NoBootstrap: true}); err == nil {
+		t.Error("want StatusError")
+	}
+}
+
 func TestSyncCalendar_emptyFolderRejected(t *testing.T) {
 	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		t.Fatal("server should not be hit")
