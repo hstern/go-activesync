@@ -89,8 +89,22 @@ jobs:
 
       - name: test (race + coverage + junit)
         run: |
-          gotestsum --junitfile junit.xml -- \
-            -race -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+          gotestsum \
+            --junitfile junit.xml \
+            --junitfile-project-name=go-activesync \
+            --junitfile-testsuite-name=short \
+            --junitfile-testcase-classname=short \
+            -- -race -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+
+      # Surface the JUnit XML as an artifact so we can debug Codecov
+      # parser behavior without re-running CI. Drop this once the
+      # Tests page is reliably populated.
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: junit
+          path: junit.xml
+          if-no-files-found: error
 
       - name: coverage summary
         run: go tool cover -func=coverage.out | tail -5
@@ -178,8 +192,12 @@ jobs:
           EAS_INTEGRATION_DEVICE: integration00000000000000000000
           EAS_INTEGRATION_VERSION: "14.0"
         run: |
-          gotestsum --junitfile junit-integration.xml -- \
-            -tags integration -count=1 -timeout 5m ./eas
+          gotestsum \
+            --junitfile junit-integration.xml \
+            --junitfile-project-name=go-activesync \
+            --junitfile-testsuite-name=short \
+            --junitfile-testcase-classname=short \
+            -- -tags integration -count=1 -timeout 5m ./eas
 
       # Surface integration-test analytics separately from unit so
       # Codecov can track Z-Push-flakiness independently of pure-Go bugs.
