@@ -123,6 +123,10 @@ jobs:
           files: ./junit.xml
           flags: unittests
           report_type: test_results
+          # Without this the action runs `codecov upload-coverage`
+          # which silently mis-files JUnit through the coverage
+          # pipeline; `upload-test-results` is the right subcommand.
+          run_command: upload-test-results
           fail_ci_if_error: false
 
   # ------------------------------------------------------------------------
@@ -185,6 +189,10 @@ jobs:
           files: ./junit-integration.xml
           flags: integration
           report_type: test_results
+          # Without this the action runs `codecov upload-coverage`
+          # which silently mis-files JUnit through the coverage
+          # pipeline; `upload-test-results` is the right subcommand.
+          run_command: upload-test-results
           fail_ci_if_error: false
 
       - name: container logs on failure
