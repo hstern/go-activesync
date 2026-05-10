@@ -347,6 +347,77 @@ func TestIntegration_Tasks_CRUD(t *testing.T) {
 	}
 }
 
+func TestIntegration_Ping_NotifiesOnNewEmail(t *testing.T) {
+	c := provisionedClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	folders, err := c.FolderSync(ctx)
+	mustOK(t, err)
+	inbox := findInboxID(folders.Added)
+	if inbox == "" {
+		t.Skip("no Inbox folder")
+	}
+
+	// Bootstrap the inbox sync state so Z-Push has a baseline to detect
+	// changes against. Without this, Ping returns Status=7 (folder
+	// hierarchy out of date) on the first call.
+	if _, err := c.SyncEmail(ctx, inbox, eas.EmailSyncOptions{
+		WindowSize: 1, NoBootstrap: true,
+	}); err != nil {
+		t.Fatalf("bootstrap sync: %v", err)
+	}
+
+	// Run Ping in a goroutine with a heartbeat that exceeds the time we
+	// expect the loopback mail to take (~5s for postfix → dovecot LMTP)
+	// but stays well under the test deadline.
+	pingDone := make(chan struct{})
+	var pingRes *eas.PingResult
+	var pingErr error
+	go func() {
+		defer close(pingDone)
+		pingRes, pingErr = c.Ping(ctx, 60, []eas.PingFolder{
+			{ID: inbox, Class: "Email"},
+		})
+	}()
+
+	// Give the server a moment to register the Ping subscription before
+	// generating the change it should report.
+	time.Sleep(2 * time.Second)
+
+	user := os.Getenv("EAS_INTEGRATION_USER")
+	subject := fmt.Sprintf("go-activesync ping notify %d", time.Now().UnixNano())
+	mime := []byte(fmt.Sprintf(
+		"From: %s\r\nTo: %s\r\nSubject: %s\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"+
+			"Triggering Ping notification.\r\n",
+		user, user, subject))
+	mustOK(t, c.SendMail(ctx, eas.SendMailOptions{MIME: mime, SkipSaveInSent: true}))
+
+	select {
+	case <-pingDone:
+	case <-ctx.Done():
+		t.Fatalf("Ping did not return within deadline (still in flight)")
+	}
+	if pingErr != nil {
+		t.Fatalf("Ping error: %v", pingErr)
+	}
+	if pingRes.Status != 2 {
+		t.Fatalf("Ping returned Status=%d, want 2 (changes available); ChangedFolders=%v",
+			pingRes.Status, pingRes.ChangedFolders)
+	}
+	matched := false
+	for _, id := range pingRes.ChangedFolders {
+		if id == inbox {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		t.Errorf("Ping reported changes in %v, want Inbox %q", pingRes.ChangedFolders, inbox)
+	}
+	t.Logf("Ping notified after %s; ChangedFolders=%v", "loopback delivery", pingRes.ChangedFolders)
+}
+
 func TestIntegration_GAL_Search(t *testing.T) {
 	c := provisionedClient(t)
 	ctx := context.Background()

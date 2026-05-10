@@ -77,12 +77,15 @@ func (c *Client) Ping(ctx context.Context, heartbeatSeconds int, folders []PingF
 			if !ok {
 				continue
 			}
-			// Pre-14.0 servers: each child is just an Id element.
-			// 14.x: each child is a Folder containing an Id (and Class).
+			// MS-ASCMD §2.2.2.11.2 says <Folder> is a leaf with the
+			// folder ID as its text. Some implementations (rare) wrap
+			// the ID in an explicit <Id> child instead. Handle both.
 			switch el.Name {
 			case "Folder":
 				if id := el.Find("Id"); id != nil {
 					out.ChangedFolders = append(out.ChangedFolders, id.TextContent())
+				} else if t := el.TextContent(); t != "" {
+					out.ChangedFolders = append(out.ChangedFolders, t)
 				}
 			case "Id":
 				out.ChangedFolders = append(out.ChangedFolders, el.TextContent())

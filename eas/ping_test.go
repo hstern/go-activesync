@@ -69,6 +69,38 @@ func TestPing_changesAvailable(t *testing.T) {
 	}
 }
 
+// MS-ASCMD §2.2.2.11.2 says <Folder> contains the folder ID as text,
+// not in a nested <Id> element. Z-Push and most real servers send this
+// form. The Folder-as-text path is what made TestIntegration_Ping
+// originally fail on a real server.
+func TestPing_changesAvailable_folderAsText(t *testing.T) {
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		root := wbxml.E(wbxml.PagePing, "Ping",
+			wbxml.E(wbxml.PagePing, "Status", wbxml.Text("2")),
+			wbxml.E(wbxml.PagePing, "Folders",
+				wbxml.E(wbxml.PagePing, "Folder", wbxml.Text("inbox")),
+				wbxml.E(wbxml.PagePing, "Folder", wbxml.Text("calendar")),
+			),
+		)
+		body, _ := wbxml.Marshal(&wbxml.Document{Root: root}, wbxml.DefaultRegistry())
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.Write(body)
+	})
+	res, err := c.Ping(context.Background(), 60, []PingFolder{
+		{ID: "inbox", Class: "Email"},
+		{ID: "calendar", Class: "Calendar"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != 2 {
+		t.Errorf("Status = %d", res.Status)
+	}
+	if len(res.ChangedFolders) != 2 || res.ChangedFolders[0] != "inbox" || res.ChangedFolders[1] != "calendar" {
+		t.Errorf("ChangedFolders = %v", res.ChangedFolders)
+	}
+}
+
 func TestPing_heartbeatTooShort(t *testing.T) {
 	c, _, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
