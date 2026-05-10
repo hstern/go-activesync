@@ -24,7 +24,14 @@ services:
       - zpush-logs:/var/log/z-push
       - zpush-mail:/home/integration/Maildir
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost/Microsoft-Server-ActiveSync"]
+      # Authenticated OPTIONS — z-push correctly returns 401 to an
+      # unauthenticated probe, which `wget --spider` treats as failure
+      # and the container would never go healthy. Hitting OPTIONS with
+      # the test creds returns 200 with the MS-AS protocol headers.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null",
+             "--method=OPTIONS",
+             "--user=integration", "--password=integration",
+             "http://localhost/Microsoft-Server-ActiveSync"]
       interval: 5s
       timeout: 3s
       retries: 30
