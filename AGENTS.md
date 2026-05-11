@@ -14,9 +14,13 @@ mobile-mail sync protocol. Two packages:
   versions 12.0 / 12.1 / 14.0 / 14.1 / 16.0 / 16.1.
 - `wbxml/` — WAP Binary XML codec. All 25 EAS code pages.
 
-`testenv/` is a Docker stack (Z-Push 2.7 + Dovecot + Postfix + Radicale)
-used by integration tests. `diagrams/` is graphviz `.dot` source +
-rendered `.svg` for the READMEs.
+`testenv/` is the integration-test fleet — multiple Docker stacks
+under per-server subdirs (`zpush/`, `zpush-2.6/`, plus WIP `sogo/`,
+`grommunio/`, `zpush-kopano/`). An umbrella Makefile delegates to
+`$(MAKE) -C $(STACK)`; default `STACK=zpush`. `cmd/eas-autoprobe/`
+is a one-shot read-only protocol probe binary used to validate a
+stack (or a real account) end-to-end. `diagrams/` is graphviz
+`.dot` source + rendered `.svg` for the READMEs.
 
 The project is a public OSS library (MIT, hstern/go-activesync).
 
@@ -32,20 +36,32 @@ make fmt         # gofmt -w (fix drift)
 make svg         # re-render diagrams/*.dot → *.svg (needs graphviz)
 ```
 
-Integration tests are gated on the `integration` build tag and need the
-docker stack running:
+Integration tests are gated on the `integration` build tag and need a
+docker stack running. The umbrella Makefile picks the stack via
+`STACK=`:
 
 ```
 cd testenv
-make up          # build image + start container, wait for healthy
-make test        # run go test -tags integration -v ./eas
-make down        # tear it all down
+make up                  # default STACK=zpush
+make test
+make down
+
+make up STACK=zpush-2.6  # pick a different stack
 ```
 
-`testenv/make test` sets the env vars for you. To run tests against a
-different EAS server (your own Z-Push, SOGo, Exchange Online, …) set
+`testenv/<stack>/make test` sets the env vars for you, including
+`EAS_INTEGRATION_STACK=<stack>`. Tests that can't pass against a
+particular stack opt out with `skipOnStack(t, reason, stacks...)`
+(see `eas/integration_test.go`). To run tests against a server
+outside `testenv/` (your own Z-Push, SOGo, Exchange Online, …) set
 `EAS_INTEGRATION_URL`, `_USER`, `_PASS`, `_DEVICE` yourself and run
 `go test -tags integration ./eas` directly.
+
+`cmd/eas-autoprobe` is a faster way to sanity-check a stack or a real
+account end-to-end without running the integration test suite. It
+takes credentials via `EAS_PROBE_USER` / `EAS_PROBE_SERVER` /
+`EAS_PROBE_PASSWORD` (or `-password-stdin`) and emits a per-command
+result table or `-json` blob.
 
 ## Hard rules
 
@@ -140,23 +156,41 @@ also rotate keys out from under the original client.
 
 ## The integration testenv (`testenv/`)
 
-Single-container Docker stack at `localhost:8580` exposing
-`/Microsoft-Server-ActiveSync`. Z-Push uses BackendCombined to route:
+Multiple per-server stacks, each in its own subdir with its own
+Dockerfile / compose / Makefile. The umbrella Makefile delegates to
+`$(MAKE) -C $(STACK)` and the CI `integration` job runs one matrix
+entry per stack. Each entry carries its own host port and device ID
+(see `.github/workflows/ci.yml`'s `strategy.matrix.include`).
 
-- mail folders → BackendIMAP → Dovecot
-- calendar folders → BackendCalDAV → Radicale
-- contact folders → BackendCardDAV → Radicale
+Shipped stacks:
 
-Test user `integration / integration`. Pre-seeded calendar at
-`/integration/calendar` and addressbook at `/integration/addressbook`
-in Radicale.
+- **`zpush`** (default, port 8580) — Z-Push 2.7.6 + Dovecot + Postfix
+  + Radicale. Z-Push uses BackendCombined to route mail →
+  BackendIMAP → Dovecot, calendar → BackendCalDAV → Radicale,
+  contacts → BackendCardDAV → Radicale. Test user
+  `integration / integration`; pre-seeded calendar at
+  `/integration/calendar` and addressbook at
+  `/integration/addressbook`.
+- **`zpush-2.6`** (port 8583) — Z-Push 2.6.4 with a PHP-8 compat sed
+  patch on `ipcsharedmemoryprovider.php`. Provision returns HTTP 500
+  on PHP 8 (known 2.6 interop issue); the integration tests skip
+  Provision/`provisionedClient` on this stack via `skipOnStack`.
 
-Edits to anything under `testenv/` require an image rebuild:
+WIP / planned (tracked as issues):
+[#4 sogo](https://github.com/hstern/go-activesync/issues/4),
+[#5 grommunio](https://github.com/hstern/go-activesync/issues/5),
+[#10 zpush-kopano](https://github.com/hstern/go-activesync/issues/10),
+[#11 Exchange Online smoke](https://github.com/hstern/go-activesync/issues/11).
+
+Stack-specific behavioural gaps go behind `skipOnStack(t, reason,
+"<stack>")` — see `eas/integration_test.go` for the helper and
+`TestIntegration_Provision` for the canonical use.
+
+Edits to anything under `testenv/<stack>/` require an image rebuild:
 
 ```
-cd testenv
+cd testenv/<stack>
 docker compose down -v
-docker rmi testenv-zpush:latest
 docker compose build
 docker compose up -d
 ```
@@ -216,6 +250,7 @@ guarantee that the release page and the file disagree.
 eas/                       EAS client (public API)
   *.go                     one file per command + shared types
   client.go                HTTP transport, auth, retry policy
+  easmock/                 hand-written test doubles (per sub-interface)
   integration_test.go      gated on `integration` build tag
   README.md                package landing page (with diagrams)
   diagrams/                .dot source + rendered .svg
@@ -223,16 +258,15 @@ wbxml/                     WBXML codec (public API)
   codepages.go             EAS code page registry
   reader.go / writer.go    token-level I/O
   README.md                package landing page
+cmd/eas-autoprobe/         one-shot read-only protocol probe binary
 testenv/                   integration test targets (Docker), umbrella
   Makefile                 delegates to STACK= (default zpush)
   README.md                stack inventory and quick start
-  zpush/                   Z-Push 2.7 + Dovecot + Postfix + Radicale
-    Dockerfile.zpush       container build
-    zpush-patch.sh         sed-patches stock Z-Push configs
-    Makefile               per-stack up/down/test/probe targets
-    README.md              stack details and troubleshooting
+  zpush/                   Z-Push 2.7.6 + Dovecot + Postfix + Radicale
+  zpush-2.6/               Z-Push 2.6.4 (PHP-8 compat patch)
+  sogo/, grommunio/        WIP — see issues #4, #5
 diagrams/                  top-level architecture diagram
-.github/workflows/         CI (lint + test + integration + codeql + release)
+.github/workflows/         CI (lint + test + integration matrix + codeql + release)
 Makefile                   `make ci`, `make test`, `make svg`, …
 ```
 
