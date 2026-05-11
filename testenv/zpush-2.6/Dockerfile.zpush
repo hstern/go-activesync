@@ -1,0 +1,117 @@
+# Copyright (C) 2026 Henry Stern
+# SPDX-License-Identifier: MIT
+
+# Single-container Z-Push 2.6 test target for go-activesync integration
+# tests. Same shape as testenv/zpush/ (the 2.7.6 default), differing
+# only in the Z-Push version pinned at build time. Catches regressions
+# against downstream deployments still on the 2.6.x line, where
+# defaults around charset handling, FolderType numbering edges, and
+# SmartReply/SmartForward behave subtly differently from 2.7.
+#
+# Bundles:
+#   - Z-Push 2.6.4 (last 2.6 release from the upstream GitHub mirror)
+#   - Apache 2 + PHP 8.2 (Z-Push runs as a PHP app)
+#   - Dovecot (IMAP backend that Z-Push talks to)
+#   - Postfix (local delivery so SendMail loopback works)
+#
+# Test user: integration / integration
+# Mail address: integration@asmcp.test
+FROM debian:12
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates wget gnupg \
+        apache2 libapache2-mod-php \
+        php-curl php-mbstring php-soap php-xml php-cli php-intl \
+        libawl-php \
+        dovecot-imapd dovecot-lmtpd \
+        postfix \
+        radicale \
+        python3-passlib \
+        supervisor \
+        procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# IMAP support for PHP (z-push backend dep).
+RUN apt-get update && apt-get install -y --no-install-recommends php-imap \
+    && rm -rf /var/lib/apt/lists/*
+
+# Z-Push 2.6.4 from the GitHub source mirror. Both historical apt repos
+# (repo.z-hub.io and download.kopano.io/community/z-push:/) are no
+# longer serving packages as of 2026; the github.com/Z-Hub/Z-Push
+# mirror remains the canonical source for both the 2.6.x and 2.7.x
+# release lines.
+ARG ZPUSH_VERSION=2.6.4
+RUN wget -qO /tmp/zpush.tgz \
+        "https://github.com/Z-Hub/Z-Push/archive/refs/tags/${ZPUSH_VERSION}.tar.gz" \
+    && mkdir -p /usr/share/z-push /etc/z-push \
+    && tar -xzf /tmp/zpush.tgz --strip-components=2 -C /usr/share/z-push \
+        "Z-Push-${ZPUSH_VERSION}/src" \
+    && rm /tmp/zpush.tgz \
+    && chown -R www-data:www-data /usr/share/z-push
+
+# PHP 8 compatibility patch. Z-Push 2.6.4 pre-dates PHP 8, where
+# sem_get() returns a SysvSemaphore object instead of a resource and
+# shm_attach() returns a Shmop. The lone sprintf("%s") debug-log
+# call in ipcsharedmemoryprovider.php breaks because those objects
+# don't auto-cast to strings. Cast to (int) — that's exactly the
+# upstream fix in Z-Push 2.7 (commit refs in
+# github.com/Z-Hub/Z-Push). Without this patch the first Provision
+# request returns HTTP 500 and nothing else works.
+RUN sed -i 's/$class, $this->mutexid, $this->memid/$class, (int)$this->mutexid, (int)$this->memid/' \
+        /usr/share/z-push/backend/ipcsharedmemory/ipcsharedmemoryprovider.php
+
+# Test user. The password is "integration"; safe because the container
+# is for local integration testing, never exposed to the network.
+RUN useradd -m -s /bin/bash integration \
+    && echo 'integration:integration' | chpasswd \
+    && mkdir -p /home/integration/Maildir/{cur,new,tmp} \
+    && chown -R integration:integration /home/integration/Maildir
+
+# Radicale: htpasswd auth + pre-seeded calendar + addressbook for the
+# test user. Z-Push's CalDAV/CardDAV backends do PROPFIND at the
+# principal URL to discover collections, so they have to exist before
+# the first sync — empty .Radicale.props files with the right `tag`
+# field is enough for radicale to recognise them.
+RUN mkdir -p /etc/radicale /var/lib/radicale/collections/collection-root/integration/calendar \
+        /var/lib/radicale/collections/collection-root/integration/addressbook \
+    && python3 -c "from passlib.apache import HtpasswdFile; \
+        h = HtpasswdFile('/etc/radicale/users', new=True, default_scheme='bcrypt'); \
+        h.set_password('integration', 'integration'); h.save()" \
+    && printf '{"tag": "VCALENDAR", "D:displayname": "Calendar"}\n' \
+        > /var/lib/radicale/collections/collection-root/integration/calendar/.Radicale.props \
+    && printf '{"tag": "VADDRESSBOOK", "D:displayname": "Contacts"}\n' \
+        > /var/lib/radicale/collections/collection-root/integration/addressbook/.Radicale.props \
+    && (id radicale >/dev/null 2>&1 || useradd -r -s /usr/sbin/nologin radicale) \
+    && chown -R radicale:radicale /var/lib/radicale /etc/radicale
+
+# Configuration files. We keep Z-Push's stock config.php and
+# backend/imap/config.php (they define dozens of constants index.php
+# expects) and patch only the values that need to change for our
+# integration target.
+COPY dovecot.conf /etc/dovecot/dovecot.conf
+COPY postfix-main.cf /etc/postfix/main.cf
+COPY radicale.conf /etc/radicale/config
+COPY apache-zpush.conf /etc/apache2/sites-available/zpush.conf
+COPY zpush-patch.sh /usr/local/bin/zpush-patch.sh
+COPY supervisord.conf /etc/supervisor/conf.d/zpush.conf
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh /usr/local/bin/zpush-patch.sh \
+    && /usr/local/bin/zpush-patch.sh \
+    && chown www-data:www-data \
+        /usr/share/z-push/config.php \
+        /usr/share/z-push/backend/imap/config.php \
+        /usr/share/z-push/backend/caldav/config.php \
+        /usr/share/z-push/backend/carddav/config.php \
+        /usr/share/z-push/backend/combined/config.php
+
+# Apache wiring.
+RUN a2dissite 000-default \
+    && a2ensite zpush \
+    && a2enmod rewrite headers \
+    && mkdir -p /var/lib/z-push /var/log/z-push \
+    && chown -R www-data:www-data /var/lib/z-push /var/log/z-push
+
+EXPOSE 80
+ENTRYPOINT ["/entrypoint.sh"]

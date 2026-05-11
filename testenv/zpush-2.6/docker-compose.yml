@@ -1,0 +1,43 @@
+# Copyright (C) 2026 Henry Stern
+# SPDX-License-Identifier: MIT
+
+# Single-container Z-Push 2.6 test target. Build + run with:
+#   make up      # docker compose up --build -d
+#   make test    # run the Go integration suite against it
+#   make down    # docker compose down -v
+#
+# The container exposes Z-Push at http://localhost:8583/Microsoft-Server-ActiveSync
+# Test credentials are integration / integration.
+
+services:
+  zpush-2-6:
+    build:
+      context: .
+      dockerfile: Dockerfile.zpush
+    container_name: go-activesync-zpush-2.6
+    ports:
+      - "8583:80"
+    # Persistent volume so state survives between `make up` runs (helps
+    # debug Sync-key issues without rebuilding).
+    volumes:
+      - zpush-2-6-state:/var/lib/z-push
+      - zpush-2-6-logs:/var/log/z-push
+      - zpush-2-6-mail:/home/integration/Maildir
+    healthcheck:
+      # Authenticated OPTIONS — z-push correctly returns 401 to an
+      # unauthenticated probe, which `wget --spider` treats as failure
+      # and the container would never go healthy. Hitting OPTIONS with
+      # the test creds returns 200 with the MS-AS protocol headers.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null",
+             "--method=OPTIONS",
+             "--user=integration", "--password=integration",
+             "http://localhost/Microsoft-Server-ActiveSync"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+volumes:
+  zpush-2-6-state:
+  zpush-2-6-logs:
+  zpush-2-6-mail:

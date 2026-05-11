@@ -7,7 +7,8 @@
 #
 # Stacks currently available:
 #
-#   zpush     Z-Push 2.7.6 + Dovecot + Postfix + Radicale (default)
+#   zpush       Z-Push 2.7.6 + Dovecot + Postfix + Radicale (default)
+#   zpush-2.6   Z-Push 2.6.4 variant of the above (regression coverage)
 #
 # Usage:
 #
