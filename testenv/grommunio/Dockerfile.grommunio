@@ -1,0 +1,62 @@
+# Copyright (C) 2026 Henry Stern
+# SPDX-License-Identifier: MIT
+
+# Single-container Grommunio test target for go-activesync.
+#
+# *** STATUS: WIP — apt install verified, runtime configuration pending. ***
+#
+# Grommunio is an OSS Exchange replacement — the gromox core (HTTP +
+# MAPI) plus grommunio-sync (a Z-Push fork bridging gromox to EAS).
+# Compared to the testenv/zpush and testenv/sogo stacks this targets
+# the highest EAS protocol versions and native GAL — coverage the
+# IMAP-backed stacks can't reach. See README.md for the open work to
+# get the stack actually running.
+#
+# Eventual contents:
+#   - gromox + grommunio-sync (EAS) + grommunio-admin-api
+#   - MariaDB (gromox's required database backend)
+#   - nginx (reverse proxy fronting gromox's HTTP)
+#   - Postfix (local delivery for SendMail loopback)
+#   - Redis (gromox cache)
+#
+# Test user: integration / integration
+# Mail address: integration@asmcp.test
+FROM debian:12
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates wget gnupg apt-transport-https \
+        supervisor procps lsb-release strace \
+    && rm -rf /var/lib/apt/lists/*
+
+# Grommunio community apt repo. The repo isn't signed in a way that
+# Debian apt accepts out-of-the-box, so we mark it [trusted=yes] for
+# the testenv — local dev container only, never network-exposed.
+RUN echo "deb [trusted=yes] https://download.grommunio.com/community/Debian_12 Debian_12 main" \
+        > /etc/apt/sources.list.d/grommunio.list
+
+# Install gromox + the rest of the Grommunio stack. This step is the
+# first one a future contributor needs to verify works against the
+# community repo at the time they pick up the work.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gromox \
+        grommunio-common grommunio-dbconf \
+        grommunio-admin-api grommunio-admin-common \
+        grommunio-sync \
+        mariadb-server mariadb-client \
+        postfix \
+        redis-server \
+        nginx-light \
+    && rm -rf /var/lib/apt/lists/*
+
+# Test user — system account; gromox stores mail in its own MAPI-style
+# store under /var/lib/gromox, not in the user's home Maildir.
+RUN useradd -m -s /bin/bash integration \
+    && echo 'integration:integration' | chpasswd
+
+# WIP — no supervisord wiring yet. See README.md "What's left" for
+# the open configuration work (gromox http.cfg + mysql_adaptor.cfg,
+# grommunio-sync.ini, mariadb init, supervisord program list, nginx
+# reverse-proxy, healthcheck).
+CMD ["bash", "-c", "echo 'grommunio testenv is WIP — see README.md for status'; sleep infinity"]

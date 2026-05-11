@@ -1,0 +1,37 @@
+# Copyright (C) 2026 Henry Stern
+# SPDX-License-Identifier: MIT
+
+# Single-container Grommunio test target. Build + run with:
+#   make up      # docker compose up --build -d
+#   make probe   # cmd/eas-autoprobe against it
+#   make down    # docker compose down -v
+#
+# The container exposes EAS at http://localhost:8582/Microsoft-Server-ActiveSync
+# Test credentials are integration / integration.
+
+services:
+  grommunio:
+    build:
+      context: .
+      dockerfile: Dockerfile.grommunio
+    container_name: go-activesync-grommunio
+    ports:
+      - "8582:80"
+    volumes:
+      - grommunio-mysql:/var/lib/mysql
+      - grommunio-gromox:/var/lib/gromox
+      - grommunio-logs:/var/log/gromox
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null",
+             "--method=OPTIONS",
+             "--user=integration", "--password=integration",
+             "http://localhost/Microsoft-Server-ActiveSync"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 60s
+
+volumes:
+  grommunio-mysql:
+  grommunio-gromox:
+  grommunio-logs:
