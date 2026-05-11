@@ -125,6 +125,10 @@ func TestIntegration_OptionsAndNegotiate(t *testing.T) {
 }
 
 func TestIntegration_Provision(t *testing.T) {
+	skipOnStack(t,
+		"Z-Push 2.6 Provision handler returns HTTP 500 on PHP 8 "+
+			"(see testenv/zpush-2.6/README.md Known issues)",
+		"zpush-2.6")
 	c := integrationClient(t)
 	ctx := context.Background()
 	mustOK(t, c.Provision(ctx))
@@ -136,9 +140,15 @@ func TestIntegration_Provision(t *testing.T) {
 }
 
 // provisionedClient returns a freshly-provisioned client ready for
-// data commands.
+// data commands. Skips on stacks where Provision is known broken so
+// the dependent tests don't fatal-cascade.
 func provisionedClient(t *testing.T) eas.Client {
 	t.Helper()
+	skipOnStack(t,
+		"Z-Push 2.6 Provision handler returns HTTP 500 on PHP 8; "+
+			"every test that depends on a policy key is unrunnable here "+
+			"(see testenv/zpush-2.6/README.md Known issues)",
+		"zpush-2.6")
 	c := integrationClient(t)
 	ctx := context.Background()
 	if _, err := c.NegotiateVersion(ctx); err != nil {

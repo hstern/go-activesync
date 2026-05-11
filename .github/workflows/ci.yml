@@ -158,16 +158,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # zpush-2.6 is intentionally NOT in the CI matrix: its
-        # Provision handler returns HTTP 500 on PHP 8 (known
-        # Z-Push 2.6 incompatibility — see
-        # testenv/zpush-2.6/README.md "Known issues"), so the
-        # integration suite can never pass against it without
-        # expected-failure handling (tracked in
-        # hstern/go-activesync#7). The stack is still available
-        # locally via `make -C testenv up STACK=zpush-2.6` for
-        # downstream-regression probing.
-        stack: [zpush]
+        # Each stack carries its own host port + device id; the
+        # integration tests pick those up via the env block below.
+        # Tests that can't pass against a particular stack opt out
+        # via skipOnStack — for zpush-2.6 specifically, Provision
+        # returns HTTP 500 on PHP 8 (a known 2.6 incompatibility),
+        # so the provisioned-client helper skips on that stack.
+        include:
+          - stack: zpush
+            url: http://localhost:8580/Microsoft-Server-ActiveSync
+            device: integration00000000000000000000
+          - stack: zpush-2.6
+            url: http://localhost:8583/Microsoft-Server-ActiveSync
+            device: integration00000000000000000003
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
@@ -200,10 +203,10 @@ jobs:
 
       - name: integration tests
         env:
-          EAS_INTEGRATION_URL: http://localhost:8580/Microsoft-Server-ActiveSync
+          EAS_INTEGRATION_URL: ${{ matrix.url }}
           EAS_INTEGRATION_USER: integration
           EAS_INTEGRATION_PASS: integration
-          EAS_INTEGRATION_DEVICE: integration00000000000000000000
+          EAS_INTEGRATION_DEVICE: ${{ matrix.device }}
           EAS_INTEGRATION_VERSION: "14.0"
           # Identifies which testenv stack the integration tests are
           # running against. Tests use `skipOnStack` to opt out on
