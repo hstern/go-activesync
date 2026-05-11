@@ -8,6 +8,7 @@
 # Stacks currently available:
 #
 #   zpush     Z-Push 2.7.6 + Dovecot + Postfix + Radicale (default)
+#   sogo      SOGo + sogo-activesync + Dovecot + Postfix + PostgreSQL
 #
 # Usage:
 #

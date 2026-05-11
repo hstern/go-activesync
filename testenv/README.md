@@ -10,9 +10,10 @@ stacks don't cover what you need.
 | Subdir | Server stack | What it covers |
 |--------|--------------|----------------|
 | [`zpush/`](zpush/) | Z-Push 2.7.6 + Dovecot + Postfix + Radicale, routed via BackendCombined / BackendIMAP / BackendCalDAV / BackendCardDAV | The default. Email / Calendar / Contacts / Tasks across the most common OSS EAS deployment. |
+| [`sogo/`](sogo/) | SOGo + sogo-activesync + Dovecot + Postfix + PostgreSQL + memcached, fronted by nginx | The deployment shape used by `mail.stern.ca`. Exercises SOGo's autodiscover (mobilesync-rejecting) responder and the v1.1.0 well-known fallback path. |
 
 More stacks are planned — see `RELEASE-PLAN.md` for the priority
-order (SOGo, Grommunio, Z-Push + BackendKopano, ...).
+order (Grommunio, Z-Push + BackendKopano, ...).
 
 ## Quick start
 

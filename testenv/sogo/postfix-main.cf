@@ -1,0 +1,26 @@
+# Copyright (C) 2026 Henry Stern
+# SPDX-License-Identifier: MIT
+#
+# Minimal Postfix config for the SOGo testenv. Local delivery via
+# Dovecot LMTP so SendMail loopback works.
+
+smtpd_banner = $myhostname ESMTP test
+myhostname = sogo.asmcp.test
+mydomain = asmcp.test
+myorigin = $mydomain
+inet_interfaces = 127.0.0.1
+inet_protocols = ipv4
+
+mydestination = $myhostname, localhost.$mydomain, localhost, $mydomain
+
+# Hand local mail to Dovecot LMTP (so it lands in the Maildir
+# dovecot serves to SOGo).
+mailbox_transport = lmtp:inet:127.0.0.1:24
+local_transport   = lmtp:inet:127.0.0.1:24
+
+# Permissive smtpd for loopback testing.
+smtpd_recipient_restrictions = permit_mynetworks, reject_unauth_destination
+mynetworks = 127.0.0.0/8
+
+# Quiet down for tests; log to stderr via supervisord.
+maillog_file = /dev/stderr

@@ -1,0 +1,84 @@
+# Copyright (C) 2026 Henry Stern
+# SPDX-License-Identifier: MIT
+
+# Single-container SOGo + sogo-activesync test target for go-activesync
+# integration tests. Mirrors the deployment shape of mail.stern.ca
+# (SOGo as the groupware front, sogo-activesync as the EAS endpoint).
+#
+# Bundles:
+#   - SOGo + sogo-activesync (from packages.inverse.ca)
+#   - PostgreSQL (SOGo's profile and ACL store)
+#   - Dovecot (IMAP backend)
+#   - Postfix (local delivery for SendMail loopback)
+#   - memcached (SOGo session cache)
+#   - nginx (reverse proxy fronting SOGo + /Microsoft-Server-ActiveSync)
+#
+# Test user: integration / integration
+# Mail address: integration@asmcp.test
+FROM debian:12
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Base tools + apt prerequisites for adding the SOGo repo.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates wget gnupg apt-transport-https \
+        supervisor procps lsb-release \
+    && rm -rf /var/lib/apt/lists/*
+
+# SOGo apt repo (packages.sogo.nu). For the testenv we skip signature
+# verification — this is a local dev container, never network-exposed,
+# and the SOGo project no longer ships an easy-to-fetch keyring file.
+RUN echo "deb [trusted=yes] https://packages.sogo.nu/nightly/5/debian bookworm bookworm" \
+        > /etc/apt/sources.list.d/sogo.list
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        sogo sogo-activesync sope4.9-gdl1-postgresql \
+        postgresql postgresql-contrib \
+        dovecot-imapd dovecot-lmtpd \
+        postfix \
+        memcached \
+        nginx-light \
+        python3-passlib \
+    && rm -rf /var/lib/apt/lists/*
+
+# Test user — system + Maildir.
+RUN useradd -m -s /bin/bash integration \
+    && echo 'integration:integration' | chpasswd \
+    && mkdir -p /home/integration/Maildir/{cur,new,tmp} \
+    && chown -R integration:integration /home/integration/Maildir
+
+# PostgreSQL: initdb has already run via the apt postinst on debian:12.
+# Bootstrap the SOGo database + user at build time so the running
+# container can come up cleanly without needing entrypoint init.
+COPY init-sogo-users.sql /tmp/init-sogo-users.sql
+RUN pg_ctlcluster 15 main start \
+    && su postgres -c "psql -c \"CREATE USER sogo WITH PASSWORD 'sogo';\"" \
+    && su postgres -c "psql -c \"CREATE DATABASE sogo OWNER sogo;\"" \
+    && su postgres -c "psql -d sogo -c \"GRANT ALL ON SCHEMA public TO sogo;\"" \
+    && su postgres -c "psql -d sogo -f /tmp/init-sogo-users.sql" \
+    && pg_ctlcluster 15 main stop \
+    && rm /tmp/init-sogo-users.sql
+
+# Configuration drops.
+COPY sogo.conf /etc/sogo/sogo.conf
+COPY dovecot.conf /etc/dovecot/dovecot.conf
+COPY postfix-main.cf /etc/postfix/main.cf
+COPY nginx.conf /etc/nginx/sites-available/sogo.conf
+COPY supervisord.conf /etc/supervisor/conf.d/sogo.conf
+COPY entrypoint.sh /entrypoint.sh
+COPY run-sogod.sh /usr/local/bin/run-sogod.sh
+RUN chmod +x /entrypoint.sh /usr/local/bin/run-sogod.sh \
+    && chown sogo:sogo /etc/sogo/sogo.conf \
+    && chmod 640 /etc/sogo/sogo.conf \
+    && ln -sf /etc/nginx/sites-available/sogo.conf /etc/nginx/sites-enabled/sogo.conf \
+    && rm -f /etc/nginx/sites-enabled/default \
+    && mkdir -p /var/log/sogo /var/spool/sogo \
+    && chown -R sogo:sogo /var/log/sogo /var/spool/sogo
+
+# PostgreSQL needs to bind 127.0.0.1 and accept md5/scram auth for the
+# sogo user. Stock Debian config listens only on the unix socket.
+RUN sed -i "s/^#listen_addresses.*/listen_addresses = '127.0.0.1'/" /etc/postgresql/15/main/postgresql.conf \
+    && echo "host    sogo  sogo  127.0.0.1/32  scram-sha-256" >> /etc/postgresql/15/main/pg_hba.conf
+
+EXPOSE 80
+ENTRYPOINT ["/entrypoint.sh"]
