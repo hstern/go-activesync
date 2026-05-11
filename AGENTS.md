@@ -40,7 +40,7 @@ Integration tests are gated on the `integration` build tag and need a
 docker stack running. The umbrella Makefile picks the stack via
 `STACK=`:
 
-```
+```bash
 cd testenv
 make up                  # default STACK=zpush
 make test
@@ -188,7 +188,7 @@ Stack-specific behavioural gaps go behind `skipOnStack(t, reason,
 
 Edits to anything under `testenv/<stack>/` require an image rebuild:
 
-```
+```bash
 cd testenv/<stack>
 docker compose down -v
 docker compose build
