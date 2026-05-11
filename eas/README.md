@@ -243,6 +243,12 @@ live EAS server you point it at via env vars; see the
 and the [integration test file](integration_test.go) for runnable
 examples of every major command.
 
+For multi-stack runs, set `EAS_INTEGRATION_STACK=<stack-name>` (e.g.
+`zpush`, `zpush-2.6`, `sogo`) so individual tests can opt out on
+stacks with documented upstream gaps via the `skipOnStack` helper.
+See the "Server-specific notes" table below for the gaps each stack
+has and which tests skip on each.
+
 ### Testing your own code that depends on `eas`
 
 `eas.Client` is an interface. The
