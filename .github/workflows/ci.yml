@@ -158,7 +158,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        stack: [zpush, zpush-2.6]
+        # zpush-2.6 is intentionally NOT in the CI matrix: its
+        # Provision handler returns HTTP 500 on PHP 8 (known
+        # Z-Push 2.6 incompatibility — see
+        # testenv/zpush-2.6/README.md "Known issues"), so the
+        # integration suite can never pass against it without
+        # expected-failure handling (tracked in
+        # hstern/go-activesync#7). The stack is still available
+        # locally via `make -C testenv up STACK=zpush-2.6` for
+        # downstream-regression probing.
+        stack: [zpush]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
