@@ -205,6 +205,12 @@ jobs:
           EAS_INTEGRATION_PASS: integration
           EAS_INTEGRATION_DEVICE: integration00000000000000000000
           EAS_INTEGRATION_VERSION: "14.0"
+          # Identifies which testenv stack the integration tests are
+          # running against. Tests use `skipOnStack` to opt out on
+          # stacks with documented protocol-surface gaps (e.g. the
+          # Z-Push 2.6 Provision handler is broken on PHP 8). See
+          # #7 for the design.
+          EAS_INTEGRATION_STACK: ${{ matrix.stack }}
         run: |
           gotestsum \
             --junitfile junit-integration.xml \

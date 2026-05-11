@@ -13,6 +13,9 @@
 //	EAS_INTEGRATION_VERSION optional EAS version (default: NegotiateVersion result)
 //	EAS_INTEGRATION_INSECURE if "1", skip TLS verification (self-signed test cert)
 //	EAS_INTEGRATION_VERBOSE  if "1", enable debug logging to stderr
+//	EAS_INTEGRATION_STACK    optional testenv stack name (zpush, zpush-2.6, sogo, …);
+//	                         tests use skipOnStack() to opt out on stacks with
+//	                         documented protocol-surface gaps
 //
 // Run from the repo root:
 //
@@ -453,6 +456,24 @@ func TestIntegration_Settings_OOF_RoundTrip(t *testing.T) {
 }
 
 // --- helpers ---------------------------------------------------------------
+
+// skipOnStack calls t.Skipf when the current EAS_INTEGRATION_STACK env
+// var matches any of the named stacks. Use for tests that can't pass
+// against a known-broken stack (e.g. zpush-2.6's Provision handler
+// returns HTTP 500 on PHP 8) where the failure isn't a regression but
+// a documented upstream incompatibility.
+//
+// The reason string ends up in the test report so a future reader can
+// tell why the test was skipped without grepping the source.
+func skipOnStack(t *testing.T, reason string, stacks ...string) {
+	t.Helper()
+	cur := os.Getenv("EAS_INTEGRATION_STACK")
+	for _, s := range stacks {
+		if cur == s {
+			t.Skipf("skipped on stack %q: %s", cur, reason)
+		}
+	}
+}
 
 func findInboxID(folders []eas.Folder) string {
 	for _, f := range folders {
